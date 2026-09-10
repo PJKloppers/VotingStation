@@ -1,0 +1,5 @@
+# Minimal config so `supabase link` and `supabase db push` find this project.
+project_id = "ukkgodlkxoyilyagtttj"
+
+[db]
+major_version = 17

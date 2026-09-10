@@ -1,0 +1,27 @@
+{
+  "name": "votingstation-frontend",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run build.ts --dev",
+    "build": "bun run build.ts",
+    "serve": "bun run serve.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test tests/unit",
+    "test:e2e": "bun test tests/e2e --timeout 60000",
+    "check": "bun run typecheck && bun run test && bun run build",
+    "test:integration": "bun test tests/integration --timeout 60000"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.58.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "puppeteer-core": "^25.10.0",
+    "typescript": "^5.9.0"
+  }
+}
