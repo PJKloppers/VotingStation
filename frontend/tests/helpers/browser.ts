@@ -66,6 +66,18 @@ export async function waitForText(page: Page, text: string, timeout = 15000): Pr
   );
 }
 
+/**
+ * Types a PIN into the voter's box.
+ *
+ * The ballot is fetched after React mounts, so the box does not exist when the
+ * document finishes loading -- and on a hash-only navigation there is no
+ * document load to wait for at all.
+ */
+export async function enterPin(page: Page, pin: string): Promise<void> {
+  await page.waitForSelector('.pin-entry', { timeout: 15000 });
+  await page.type('.pin-entry', pin);
+}
+
 /** Clicks the first element whose text matches, within a selector. */
 export async function clickByText(page: Page, selector: string, text: string): Promise<void> {
   const handle = await page.evaluateHandle(

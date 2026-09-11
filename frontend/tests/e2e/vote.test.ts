@@ -12,7 +12,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Browser, Page } from 'puppeteer-core';
 import { anonClient, credentials, organizerClient, uniqueSlug } from '../helpers/env';
-import { clickByText, launchBrave, serveStatic, waitForText } from '../helpers/browser';
+import { clickByText, enterPin, launchBrave, serveStatic, waitForText } from '../helpers/browser';
 
 const DIST = new URL('../../dist', import.meta.url).pathname;
 
@@ -97,7 +97,7 @@ describe('the voter', () => {
     await page.goto(`${origin}/#/vote/${ballotId}`, { waitUntil: 'networkidle0' });
     await waitForText(page, 'Browser Run');
 
-    await page.type('.pin-entry', '000000');
+    await enterPin(page, '000000');
     await clickByText(page, 'button', 'Open my ballot');
     await waitForText(page, 'not valid');
     await page.close();
@@ -106,7 +106,7 @@ describe('the voter', () => {
   test('sees the waiting screen while every gate is closed', async () => {
     const page = await newPage();
     await page.goto(`${origin}/#/vote/${ballotId}`, { waitUntil: 'networkidle0' });
-    await page.type('.pin-entry', pins[0]!);
+    await enterPin(page, pins[0]!);
     await clickByText(page, 'button', 'Open my ballot');
     await waitForText(page, 'No question is open yet');
     expect(await page.$$eval('.lobby-item', (n) => n.length)).toBe(0);
@@ -120,7 +120,7 @@ describe('the voter', () => {
 
     const page = await newPage();
     await page.goto(`${origin}/#/vote/${ballotId}`, { waitUntil: 'networkidle0' });
-    await page.type('.pin-entry', pins[0]!);
+    await enterPin(page, pins[0]!);
     await clickByText(page, 'button', 'Open my ballot');
 
     await waitForText(page, 'Adopt the minutes');
@@ -149,7 +149,7 @@ describe('the voter', () => {
   test('follows the meeting when the chair moves to the next question', async () => {
     const page = await newPage();
     await page.goto(`${origin}/#/vote/${ballotId}`, { waitUntil: 'networkidle0' });
-    await page.type('.pin-entry', pins[1]!);
+    await enterPin(page, pins[1]!);
     await clickByText(page, 'button', 'Open my ballot');
     await waitForText(page, 'Adopt the minutes');
 
@@ -173,7 +173,7 @@ describe('the voter', () => {
   test('sees a vote against a gate the chair has since closed refused', async () => {
     const page = await newPage();
     await page.goto(`${origin}/#/vote/${ballotId}`, { waitUntil: 'networkidle0' });
-    await page.type('.pin-entry', pins[0]!);
+    await enterPin(page, pins[0]!);
     await clickByText(page, 'button', 'Open my ballot');
     await waitForText(page, 'Elect the chair');
     await clickByText(page, '.lobby-item', 'Elect the chair');
