@@ -49,6 +49,21 @@ Nothing that already works has to change.
 two thirds. `1/2` strict is a simple majority — a tie fails. `2/3` loose is *at
 least* two thirds. Storing `0.667` would have quietly failed a 2-of-3 vote.
 
+## Arriving
+
+A voter arrives holding a PIN and nothing else, so the front page asks for that
+and nothing else. A PIN is unique *per ballot* rather than globally, so
+`find_ballots_for_pin` resolves it: one match goes straight through to the
+lobby, several ask which, none says so. The PIN is handed to the ballot page in
+memory, never through the URL or storage — a reload asks for it again, which is
+the right way round.
+
+That lookup widens the guessing surface, since one guess now probes every
+published ballot at once. The counterweight is the same lock-out the ballot
+itself uses — twelve failed lookups per browser per fifteen minutes, failures
+only — and the answer carries nothing a reader could not already get from the
+public directory below it: a ballot's title and whose it is.
+
 ## How a meeting runs
 
 ```
@@ -94,6 +109,15 @@ Failed PIN attempts are counted per browser, twelve in fifteen minutes. Only
 of their own ballot. The voter-facing functions **return** their errors rather
 than raising them, because a raise would roll back the counter along with
 everything else.
+
+## Setting up a ballot
+
+Options can be pasted rather than typed one at a time: the box takes a name, a
+column, or a row, so a list straight out of a spreadsheet works as it is.
+Commas and newlines both separate, quoted fields are respected (`"Smith, J"` is
+one candidate), repeats are dropped case-insensitively against what the question
+already has — the same way the unique index behind it matches — and the button
+says how many will actually be added.
 
 ## Layout
 

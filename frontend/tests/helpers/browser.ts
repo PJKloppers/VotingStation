@@ -52,6 +52,35 @@ export function serveStatic(dir: string) {
 }
 
 /**
+ * Clicks a control inside the one container that mentions something.
+ *
+ * A page listing several questions has several Edit buttons, and "the first
+ * one" is a test that passes for the wrong reason the moment the order
+ * changes. This says which card is meant.
+ */
+export async function clickWithin(
+  page: Page, container: string, containing: string, control: string, text: string,
+  timeout = 15000,
+): Promise<void> {
+  const handle = await page.waitForFunction(
+    (sel: string, needle: string, ctrl: string, label: string) => {
+      const box = [...document.querySelectorAll(sel)].find((el) =>
+        (el as HTMLElement).innerText.toLowerCase().includes(needle.toLowerCase()));
+      if (!box) return false;
+      return [...box.querySelectorAll(ctrl)].find((el) =>
+        (el as HTMLElement).innerText.trim().toLowerCase().includes(label.toLowerCase())) ?? false;
+    },
+    { timeout, polling: 200 },
+    container, containing, control, text,
+  );
+  const element = handle.asElement() as ElementHandle<Element> | null;
+  if (!element) {
+    throw new Error(`No ${control} reading "${text}" inside a ${container} about "${containing}".`);
+  }
+  await element.click();
+}
+
+/**
  * Waits for text to appear anywhere on the page, ignoring case.
  *
  * Case matters here: `innerText` reports what is rendered, and the pills are
@@ -78,12 +107,23 @@ export async function enterPin(page: Page, pin: string): Promise<void> {
   await page.type('.pin-entry', pin);
 }
 
-/** Clicks the first element whose text matches, within a selector. */
-export async function clickByText(page: Page, selector: string, text: string): Promise<void> {
-  const handle = await page.evaluateHandle(
+/**
+ * Clicks the first element whose text matches, within a selector, waiting for
+ * it to appear.
+ *
+ * Waiting is the point. Nearly every control here shows up only after a fetch
+ * resolves, and a click that fails the instant the page is not ready yet tells
+ * you nothing about why.
+ */
+export async function clickByText(
+  page: Page, selector: string, text: string, timeout = 15000,
+): Promise<void> {
+  const handle = await page.waitForFunction(
     (sel: string, needle: string) =>
       [...document.querySelectorAll(sel)].find((el) =>
-        (el as HTMLElement).innerText.trim().toLowerCase().includes(needle.toLowerCase())) ?? null,
+        (el as HTMLElement).innerText.trim().toLowerCase().includes(needle.toLowerCase()))
+      ?? false,
+    { timeout, polling: 200 },
     selector, text,
   );
   const element = handle.asElement() as ElementHandle<Element> | null;

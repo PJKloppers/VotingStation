@@ -392,6 +392,193 @@ describe('the organizer', () => {
   });
 });
 
+/* ------------------------------------------------------------------------ */
+
+describe('creating a ballot', () => {
+  // A ballot is born a draft, so this is the first thing the organizer's
+  // "New ballot" button does. It used to be refused outright: the read policy
+  // looked the new row up in `ballots`, where an INSERT cannot yet see it.
+  test('a draft comes back from the insert that made it', async () => {
+    const { data, error } = await organizer.from('ballots')
+      .insert({ org_id: orgId, slug: uniqueSlug('fresh'), title: 'Fresh draft' })
+      .select('id, status').single();
+
+    expect(error).toBeNull();
+    expect(data).not.toBeNull();
+    expect(data!.status).toBe('draft');
+    await organizer.from('ballots').delete().eq('id', data!.id);
+  });
+
+  test('a draft is the organizer\'s alone until they publish it', async () => {
+    const { data } = await organizer.from('ballots')
+      .insert({ org_id: orgId, slug: uniqueSlug('hidden'), title: 'Hidden draft' })
+      .select('id').single();
+
+    const { data: seen } = await voter.from('ballots').select('id').eq('id', data!.id).maybeSingle();
+    expect(seen).toBeNull();
+
+    const { data: mine } = await organizer.from('ballots').select('id').eq('id', data!.id).maybeSingle();
+    expect(mine?.id).toBe(data!.id);
+
+    await organizer.from('ballots').delete().eq('id', data!.id);
+  });
+});
+
+describe('finding a ballot from a PIN alone', () => {
+  const lookup = (pin: string, fp: string) =>
+    call<{ ok: boolean; error?: string; ballots?: Array<{ ballot_id: string; org_name: string }> }>(
+      voter, 'find_ballots_for_pin', { p_pin: pin, p_fingerprint: fp });
+
+  test('names the ballot a real PIN opens', async () => {
+    await organizer.from('ballots').update({ status: 'live' }).eq('id', ballotId);
+    const answer = await lookup(pins[1]!, 'fp-lookup');
+    expect(answer.ok).toBe(true);
+    expect(answer.ballots!.map((b) => b.ballot_id)).toContain(ballotId);
+  });
+
+  test('carries the organization, so a chooser can be labelled', async () => {
+    const answer = await lookup(pins[1]!, 'fp-lookup');
+    const mine = answer.ballots!.find((b) => b.ballot_id === ballotId)!;
+    expect(mine.org_name.length).toBeGreaterThan(0);
+  });
+
+  test('refuses a PIN that opens nothing', async () => {
+    const answer = await lookup('000000', 'fp-lookup-miss');
+    expect(answer.ok).toBe(false);
+    expect(answer.error).toContain('not valid');
+  });
+
+  test('refuses a PIN of the wrong length without counting it', async () => {
+    const answer = await lookup('12', 'fp-lookup-short');
+    expect(answer.ok).toBe(false);
+    expect(answer.error).toBe('A PIN is six digits.');
+  });
+
+  test('will not point at a draft ballot', async () => {
+    await organizer.from('ballots').update({ status: 'draft' }).eq('id', ballotId);
+    const answer = await lookup(pins[1]!, 'fp-lookup-draft');
+    expect(answer.ok).toBe(false);
+    await organizer.from('ballots').update({ status: 'live' }).eq('id', ballotId);
+  });
+
+  test('returns every ballot a PIN happens to open', async () => {
+    // The same six digits, minted by hand on a second ballot.
+    const { data: other } = await organizer.from('ballots').insert({
+      org_id: orgId, slug: uniqueSlug('twin'), title: 'Twin Ballot', status: 'live',
+    }).select('id').single();
+    await organizer.from('ballot_tokens')
+      .insert({ ballot_id: other!.id, pin: pins[1]!, label: 'Twin' });
+
+    const answer = await lookup(pins[1]!, 'fp-lookup-twin');
+    expect(answer.ok).toBe(true);
+    expect(answer.ballots!.map((b) => b.ballot_id).sort())
+      .toEqual([ballotId, other!.id].sort());
+
+    await organizer.from('ballots').delete().eq('id', other!.id);
+  });
+
+  test('locks a browser out after twelve misses, and only misses count', async () => {
+    const fp = `fp-brute-${Date.now()}`;
+    for (let i = 0; i < 12; i++) {
+      const miss = await lookup(String(100000 + i), fp);
+      expect(miss.ok).toBe(false);
+    }
+    const locked = await lookup(pins[1]!, fp);
+    expect(locked.ok).toBe(false);
+    expect(locked.error).toContain('Too many incorrect PINs');
+
+    // A browser that has not been guessing is unaffected.
+    const innocent = await lookup(pins[1]!, `fp-clean-${Date.now()}`);
+    expect(innocent.ok).toBe(true);
+  });
+
+  test('is not reachable as a table, only as that function', async () => {
+    const { error } = await voter.from('pin_lookups').select('fingerprint');
+    expect(error).not.toBeNull();
+  });
+});
+
+describe('the public directory', () => {
+  // An organization whose only ballot is a draft. It must not be listed.
+  let quietOrg: string;
+  let quietBallot: string;
+
+  beforeAll(async () => {
+    const { data: user } = await organizer.auth.getUser();
+    const { data: org } = await organizer.from('organizations')
+      .insert({ owner_id: user.user!.id, slug: uniqueSlug('quiet'), name: 'Quiet Org' })
+      .select('id').single();
+    quietOrg = org!.id;
+    const { data: draft } = await organizer.from('ballots')
+      .insert({ org_id: quietOrg, slug: uniqueSlug('draft'), title: 'Not published', status: 'draft' })
+      .select('id').single();
+    quietBallot = draft!.id;
+  });
+
+  afterAll(async () => {
+    if (quietBallot) await organizer.from('ballots').delete().eq('id', quietBallot);
+    if (quietOrg) await organizer.from('organizations').delete().eq('id', quietOrg);
+  });
+
+  /** The query behind the landing page, as an anonymous reader runs it. */
+  const directory = async () => {
+    const { data, error } = await voter
+      .from('organizations')
+      .select('id, slug, name, description, contact, ballots!inner(id)')
+      .neq('ballots.status', 'draft')
+      .order('name');
+    if (error) throw new Error(error.message);
+    return (data ?? []) as Array<{ id: string; ballots: unknown[] }>;
+  };
+
+  test('lists an organization that has published a ballot', async () => {
+    await organizer.from('ballots').update({ status: 'live' }).eq('id', ballotId);
+    const rows = await directory();
+    expect(rows.map((r) => r.id)).toContain(orgId);
+  });
+
+  test('counts only the published ballots against it', async () => {
+    const rows = await directory();
+    const mine = rows.find((r) => r.id === orgId)!;
+    expect(mine.ballots.length).toBeGreaterThan(0);
+
+    const { data: drafts } = await voter.from('ballots')
+      .select('id').eq('org_id', orgId).eq('status', 'draft');
+    expect(drafts ?? []).toHaveLength(0);
+  });
+
+  test('leaves out an organization whose only ballot is a draft', async () => {
+    const rows = await directory();
+    expect(rows.map((r) => r.id)).not.toContain(quietOrg);
+  });
+
+  test('lists it as soon as that ballot is published, and drops it again', async () => {
+    await organizer.from('ballots').update({ status: 'live' }).eq('id', quietBallot);
+    expect((await directory()).map((r) => r.id)).toContain(quietOrg);
+
+    await organizer.from('ballots').update({ status: 'draft' }).eq('id', quietBallot);
+    expect((await directory()).map((r) => r.id)).not.toContain(quietOrg);
+  });
+
+  test('hands a reader only the published ballots of one organization', async () => {
+    await organizer.from('ballots').update({ status: 'live' }).eq('id', quietBallot);
+    const { data, error } = await voter.from('ballots')
+      .select('id, status')
+      .eq('org_id', quietOrg)
+      .neq('status', 'draft')
+      .order('created_at', { ascending: false });
+    expect(error).toBeNull();
+    expect(data).toHaveLength(1);
+    expect(data![0]!.id).toBe(quietBallot);
+    await organizer.from('ballots').update({ status: 'draft' }).eq('id', quietBallot);
+  });
+
+  test('never exposes the owner behind an organization in that listing', async () => {
+    const rows = await directory();
+    expect(rows[0]).not.toHaveProperty('owner_id');
+  });
+});
+
 describe('a draft ballot', () => {
   test('is invisible to a voter until it is published', async () => {
     await organizer.from('ballots').update({ status: 'draft' }).eq('id', ballotId);

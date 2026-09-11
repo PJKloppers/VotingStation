@@ -27,7 +27,9 @@ export function Admin() {
 
   useEffect(() => { void load(); }, [load]);
 
-  if (orgs === null) return <main><Spinner label="Loading your ballots" /></main>;
+  // Not "Loading your ballots": that reads as the heading below it, to a person
+  // skimming and to anything matching on text.
+  if (orgs === null) return <main><Spinner label="Loading your organizations" /></main>;
 
   return (
     <main>

@@ -50,10 +50,20 @@ function App() {
   return (
     <div className="shell">
       <header className="topbar">
-        <a className="brand" href={href('/')}>
-          <span className="mark" aria-hidden="true">VS</span>
-          VotingStation
-        </a>
+        <div className="brand-block">
+          <a className="brand" href={href('/')}>
+            <span className="mark" aria-hidden="true">VS</span>
+            VotingStation
+          </a>
+          <a
+            className="brand-repo"
+            href="https://github.com/PJKloppers/VotingStation"
+            target="_blank"
+            rel="noreferrer"
+          >
+            github.com/PJKloppers/VotingStation
+          </a>
+        </div>
         <nav>
           <a href={href('/')} aria-current={head === undefined ? 'page' : undefined}>Ballots</a>
           {session ? (

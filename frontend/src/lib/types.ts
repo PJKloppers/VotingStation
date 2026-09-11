@@ -18,6 +18,29 @@ export interface Organization {
   created_at: string;
 }
 
+/** A ballot a PIN was found on. */
+export interface PinMatch {
+  ballot_id: string;
+  title: string;
+  status: 'live' | 'closed';
+  org_name: string;
+  org_slug: string;
+}
+
+/**
+ * One row of the public directory: an organization, with how many published
+ * ballots it has. The ballots themselves are not carried -- they are fetched
+ * when a reader opens the organization.
+ */
+export interface OrgListing {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  contact: string;
+  ballot_count: number;
+}
+
 export interface Ballot {
   id: string;
   org_id: string;

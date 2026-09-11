@@ -17,6 +17,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import * as api from '../lib/api';
+import { takePin } from '../lib/handoff';
 import { minimumPicks, selectionError, type HighestXConfig } from '../lib/rules';
 import { navigate } from '../lib/router';
 import type {
@@ -77,6 +78,18 @@ export function Vote({ ballotId }: { ballotId: string }) {
   // Optional auto-reload of the waiting screen. Left at 0 for a big meeting:
   // two hundred phones polling every ten seconds is twenty calls a second.
   const every = state?.ballot.lobby_refresh_seconds ?? 0;
+  // A voter who entered their PIN on the front page should not be asked for it
+  // again. The handoff is in memory only, so a reload lands on the PIN screen.
+  useEffect(() => {
+    const handed = takePin(ballotId);
+    if (!handed) return;
+    setPin(handed);
+    void refresh(handed);
+    // refresh is recreated whenever `pin` changes; running this once, on the
+    // ballot, is the whole intent.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ballotId]);
+
   useEffect(() => {
     if (screen.at !== 'lobby' || every <= 0) return;
     const id = setInterval(() => { void refresh(); }, every * 1000);

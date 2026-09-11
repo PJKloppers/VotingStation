@@ -10,8 +10,8 @@ import { supabase } from './supabase';
 import { fingerprint } from './fingerprint';
 import type {
   Accepted, Ballot, BallotResults, HighestOutrightQuestion, HighestXQuestion,
-  Organization, QuestionOption, QuestionType, Refused, TokenReport, VoterState,
-  YesNoQuestion,
+  Organization, OrgListing, PinMatch, QuestionOption, QuestionType, Refused,
+  TokenReport, VoterState, YesNoQuestion,
 } from './types';
 
 export class ApiError extends Error {}
@@ -72,6 +72,20 @@ export async function castHighestX(
   return unwrap(data, error);
 }
 
+/**
+ * Which published ballots a PIN opens.
+ *
+ * A PIN is unique per ballot, not globally, so this can legitimately come back
+ * with more than one and the caller has to ask which. Rate limited in the
+ * database on the same terms as a PIN attempt.
+ */
+export async function findBallotsForPin(pin: string): Promise<{ ok: true; ballots: PinMatch[] } | Refused> {
+  const { data, error } = await supabase.rpc('find_ballots_for_pin', {
+    p_pin: pin, p_fingerprint: fingerprint(),
+  });
+  return unwrap(data, error);
+}
+
 /* -------------------------------------------------------------- the public */
 
 export async function ballotResults(ballotId: string): Promise<BallotResults | Refused> {
@@ -95,14 +109,40 @@ export async function ballotById(id: string): Promise<Ballot | null> {
   return data as Ballot | null;
 }
 
-export async function liveBallots(): Promise<Array<Ballot & { organizations: Organization }>> {
+/**
+ * The public directory: every organization with at least one published ballot,
+ * and how many it has.
+ *
+ * `ballots!inner` makes the join decide which organizations appear, so one that
+ * has only drafts is not listed at all. Only the ballot ids come back -- a
+ * landing page should not pull every ballot of every organization to render a
+ * list of names.
+ */
+export async function publicOrganizations(): Promise<OrgListing[]> {
   const { data, error } = await supabase
-    .from('ballots')
-    .select(`${BALLOT_COLUMNS}, organizations(*)`)
+    .from('organizations')
+    .select('id, slug, name, description, contact, ballots!inner(id)')
+    .neq('ballots.status', 'draft')
+    .order('name');
+  if (error) throw new ApiError(error.message);
+  return (data ?? []).map((row) => {
+    const { ballots, ...org } = row as typeof row & { ballots: unknown[] };
+    return { ...org, ballot_count: ballots.length } as OrgListing;
+  });
+}
+
+/**
+ * One organization's published ballots. Drafts are excluded explicitly rather
+ * than left to row level security, so the public view stays the public view
+ * even when the organization's own owner is the one reading it.
+ */
+export async function publicBallotsForOrg(orgId: string): Promise<Ballot[]> {
+  const { data, error } = await supabase
+    .from('ballots').select(BALLOT_COLUMNS)
+    .eq('org_id', orgId)
     .neq('status', 'draft')
-    .order('created_at', { ascending: false })
-    .limit(50);
-  return unwrap(data, error) as unknown as Array<Ballot & { organizations: Organization }>;
+    .order('created_at', { ascending: false });
+  return unwrap(data, error) as unknown as Ballot[];
 }
 
 /* ----------------------------------------------------------- the organizer */
@@ -232,6 +272,22 @@ export async function createOption(
   const { data, error } = await supabase
     .from(table).insert({ question_id: questionId, label, sort_order: sortOrder })
     .select().single();
+  return unwrap(data, error);
+}
+
+/** Adds several options at once, keeping the order they were given in. */
+export async function createOptions(
+  type: QuestionType, questionId: string, labels: string[], startAt: number,
+): Promise<QuestionOption[]> {
+  const table = OPTION_TABLE[type];
+  if (!table) throw new ApiError('That question type has no options.');
+  if (labels.length === 0) return [];
+  const { data, error } = await supabase
+    .from(table)
+    .insert(labels.map((label, i) => ({
+      question_id: questionId, label, sort_order: startAt + i,
+    })))
+    .select();
   return unwrap(data, error);
 }
 

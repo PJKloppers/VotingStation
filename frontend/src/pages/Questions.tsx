@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import * as api from '../lib/api';
 import type { AnyQuestion } from '../lib/api';
+import { parseOptionList } from '../lib/options';
 import type { QuestionOption, QuestionType } from '../lib/types';
 import { QUESTION_TYPE_NAMES } from '../lib/types';
 import { Banner, Card, Check, Empty, Field, Pill, Spinner } from '../components/ui';
@@ -245,8 +246,9 @@ function TypeSettings({ question, value, set }: {
 
 function Options({ type, questionId }: { type: QuestionType; questionId: string }) {
   const [options, setOptions] = useState<QuestionOption[] | null>(null);
-  const [label, setLabel] = useState('');
+  const [draft, setDraft] = useState('');
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     setOptions(await api.optionsForQuestion(type, questionId));
@@ -254,15 +256,19 @@ function Options({ type, questionId }: { type: QuestionType; questionId: string 
 
   useEffect(() => { void load(); }, [load]);
 
+  const parsed = parseOptionList(draft, (options ?? []).map((o) => o.label));
+
   const add = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError('');
+    setError(''); setBusy(true);
     try {
-      await api.createOption(type, questionId, label, (options?.length ?? 0) + 1);
-      setLabel('');
+      await api.createOptions(type, questionId, parsed.labels, (options?.length ?? 0) + 1);
+      setDraft('');
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not add it.');
+      setError(err instanceof Error ? err.message : 'Could not add them.');
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -276,7 +282,7 @@ function Options({ type, questionId }: { type: QuestionType; questionId: string 
 
       {options.map((o) => (
         <div key={o.id} className="row" style={{ marginBottom: 8 }}>
-          <input className="grow" defaultValue={o.label}
+          <input className="grow" name="option_label" defaultValue={o.label}
                  onBlur={(e) => {
                    if (e.target.value !== o.label) {
                      void api.updateOption(type, o.id, { label: e.target.value }).then(load);
@@ -292,10 +298,37 @@ function Options({ type, questionId }: { type: QuestionType; questionId: string 
         </div>
       ))}
 
-      <form onSubmit={add} className="row" style={{ marginTop: 12 }}>
-        <input className="grow" value={label} name="new_option"
-               onChange={(e) => setLabel(e.target.value)} placeholder="Add an option" />
-        <button type="submit" className="ghost" disabled={!label.trim()}>Add</button>
+      {/* One control for one name or a whole column pasted out of a
+          spreadsheet -- the parser takes commas, newlines and quoted fields
+          alike, so there is no mode to choose first. */}
+      <form onSubmit={add} style={{ marginTop: 14 }}>
+        <Field label="Add options"
+               help="One per line, or comma separated. Paste a column straight from a spreadsheet.">
+          <textarea
+            name="new_options"
+            value={draft}
+            rows={draft.includes('\n') ? 5 : 2}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder={'Ann Meyer\nBen Naidoo\nCara Dlamini'}
+          />
+        </Field>
+
+        {parsed.duplicates.length > 0 ? (
+          <p className="faint">
+            Already on the question, and skipped: {parsed.duplicates.join(', ')}
+          </p>
+        ) : null}
+        {parsed.tooLong.length > 0 ? (
+          <Banner kind="error">
+            Too long to be an option: {parsed.tooLong.map((l) => `"${l.slice(0, 40)}…"`).join(', ')}
+          </Banner>
+        ) : null}
+
+        <button type="submit" className="ghost" disabled={busy || parsed.labels.length === 0}>
+          {busy ? 'Adding…'
+            : parsed.labels.length > 1 ? `Add ${parsed.labels.length} options`
+            : 'Add option'}
+        </button>
       </form>
     </div>
   );
