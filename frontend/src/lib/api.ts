@@ -326,10 +326,10 @@ export async function closeAllGates(ballotId: string): Promise<void> {
 /* ------------------------------------------------------------------ tokens */
 
 export async function issueTokens(
-  ballotId: string, count: number, labelPrefix: string,
-): Promise<Array<{ pin: string; label: string }>> {
+  ballotId: string, count: number,
+): Promise<Array<{ pin: string }>> {
   const { data, error } = await supabase.rpc('issue_tokens', {
-    p_ballot: ballotId, p_count: count, p_label_prefix: labelPrefix || null,
+    p_ballot: ballotId, p_count: count,
   });
   return unwrap(data, error);
 }

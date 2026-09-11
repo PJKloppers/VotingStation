@@ -224,7 +224,7 @@ function Lobby({ state, busy, onReload, onPick, onSignOut }: {
         <div className="row">
           <div className="grow">
             <p className="eyebrow">
-              {state.voter.label ? state.voter.label : 'Your ballot'}
+              Your ballot
               {state.voter.weight > 1 ? ` · ${state.voter.weight} votes` : ''}
             </p>
             <strong>{progress.voted} of {progress.total} answered</strong>

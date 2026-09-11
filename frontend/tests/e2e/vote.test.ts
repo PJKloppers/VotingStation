@@ -75,7 +75,7 @@ beforeAll(async () => {
   );
 
   const { data: issued } = await organizer.rpc('issue_tokens', {
-    p_ballot: ballotId, p_count: 2, p_label_prefix: 'Seat',
+    p_ballot: ballotId, p_count: 2,
   });
   pins = (issued as Array<{ pin: string }>).map((t) => t.pin);
 
@@ -236,7 +236,18 @@ describe('the front page', () => {
 });
 
 describe('the results page', () => {
-  test('publishes the count to a reader with no PIN', async () => {
+  test('gives a reader nothing while voting is still open', async () => {
+    const page = await newPage();
+    await page.goto(`${origin}/#/results/${ballotId}`, { waitUntil: 'networkidle0' });
+    await waitForText(page, 'does not publish its results');
+    const text = await page.evaluate(() => document.body.innerText);
+    expect(text).not.toContain('Ann Meyer');
+    await page.close();
+  });
+
+  test('publishes the count once the ballot closes', async () => {
+    await organizer.from('ballots').update({ status: 'closed' }).eq('id', ballotId);
+
     const page = await newPage();
     await page.goto(`${origin}/#/results/${ballotId}`, { waitUntil: 'networkidle0' });
     await waitForText(page, 'Browser Run');
@@ -244,6 +255,8 @@ describe('the results page', () => {
     await waitForText(page, 'Elect the chair');
     await waitForText(page, 'Ann Meyer');
     await page.close();
+
+    await organizer.from('ballots').update({ status: 'live' }).eq('id', ballotId);
   });
 });
 
@@ -289,3 +302,66 @@ describe('the browser console', () => {
     expect(noise).toEqual([]);
   });
 });
+
+describe('the live monitor', () => {
+  test('shows the organizer a count the public cannot see, and moves with it', async () => {
+    const { email, password } = credentials();
+    const page = await newPage();
+    await page.setViewport({ width: 1100, height: 900 });
+
+    await page.goto(`${origin}/#/signin`, { waitUntil: 'networkidle0' });
+    await page.waitForSelector('input[name="email"]', { timeout: 15000 });
+    await page.type('input[name="email"]', email);
+    await page.type('input[name="password"]', password);
+    await clickByText(page, 'button', 'Sign in');
+    await waitForText(page, 'Your ballots');
+
+    await page.goto(`${origin}/#/live/${ballotId}`, { waitUntil: 'networkidle0' });
+    await waitForText(page, 'Live results');
+    await waitForText(page, 'Adopt the minutes');
+
+    // The socket is up, so a change will be pushed rather than waited for.
+    await page.waitForSelector('.link-state.live', { timeout: 20000 });
+
+    const before = await countOn(page, 'Adopt the minutes');
+
+    // A vote cast from somewhere else entirely.
+    await organizer.rpc('set_gate', {
+      p_ballot: ballotId, p_type: 'yes_no', p_question: motionId, p_open: true, p_only: true,
+    });
+    await organizer.from('ballots').update({ allow_vote_change: true }).eq('id', ballotId);
+    const cast = await anonClient().rpc('cast_yes_no', {
+      p_ballot: ballotId, p_pin: pins[1]!, p_question: motionId,
+      p_choice: 'yes', p_fingerprint: 'monitor',
+    });
+    expect((cast.data as { ok: boolean }).ok).toBe(true);
+
+    // No reload: the page notices on its own.
+    await page.waitForFunction(
+      (prompt: string, was: number) => {
+        const card = [...document.querySelectorAll('.monitor-card')].find((c) =>
+          (c as HTMLElement).innerText.includes(prompt));
+        if (!card) return false;
+        const counts = [...card.querySelectorAll('.result-bar .count')]
+          .map((n) => Number((n as HTMLElement).innerText.split('·')[0]!.trim()));
+        return counts.reduce((a, b) => a + b, 0) > was;
+      },
+      { timeout: 25000, polling: 300 },
+      'Adopt the minutes', before,
+    );
+
+    await page.close();
+  });
+});
+
+/** Total votes shown on one question's card. */
+async function countOn(page: Page, prompt: string): Promise<number> {
+  return page.evaluate((needle: string) => {
+    const card = [...document.querySelectorAll('.monitor-card')].find((c) =>
+      (c as HTMLElement).innerText.includes(needle));
+    if (!card) return 0;
+    return [...card.querySelectorAll('.result-bar .count')]
+      .map((n) => Number((n as HTMLElement).innerText.split('\u00b7')[0]!.trim()))
+      .reduce((a, b) => a + b, 0);
+  }, prompt);
+}

@@ -145,7 +145,7 @@ export interface VoterState {
     already_voted_message: string;
     lobby_refresh_seconds: number;
   };
-  voter: { label: string; weight: number };
+  voter: { weight: number };
   progress: { voted: number; open_now: number; total: number };
   questions: LobbyQuestion[];
 }
@@ -230,7 +230,6 @@ export interface BallotResults {
 export interface TokenRow {
   id: string;
   pin: string;
-  label: string;
   status: 'active' | 'disabled';
   weight: number;
   questions_voted: number;

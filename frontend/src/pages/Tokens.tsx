@@ -7,8 +7,7 @@ import { Banner, Card, Field, Pill, Spinner } from '../components/ui';
 export function Tokens({ ballotId }: { ballotId: string }) {
   const [report, setReport] = useState<TokenReport | null>(null);
   const [count, setCount] = useState(25);
-  const [prefix, setPrefix] = useState('Delegate');
-  const [fresh, setFresh] = useState<Array<{ pin: string; label: string }>>([]);
+  const [fresh, setFresh] = useState<Array<{ pin: string }>>([]);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -26,7 +25,7 @@ export function Tokens({ ballotId }: { ballotId: string }) {
     e.preventDefault();
     setBusy(true); setError('');
     try {
-      setFresh(await api.issueTokens(ballotId, count, prefix));
+      setFresh(await api.issueTokens(ballotId, count));
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not issue PINs.');
@@ -37,8 +36,8 @@ export function Tokens({ ballotId }: { ballotId: string }) {
 
   const download = () => {
     if (!report) return;
-    const rows = [['pin', 'label', 'status', 'questions_voted'].join(',')]
-      .concat(report.tokens.map((t) => [t.pin, `"${t.label.replace(/"/g, '""')}"`, t.status, t.questions_voted].join(',')));
+    const rows = [['pin', 'status', 'questions_voted'].join(',')]
+      .concat(report.tokens.map((t) => [t.pin, t.status, t.questions_voted].join(',')));
     const url = URL.createObjectURL(new Blob([rows.join('\n')], { type: 'text/csv' }));
     const a = document.createElement('a');
     a.href = url; a.download = 'pins.csv'; a.click();
@@ -58,19 +57,10 @@ export function Tokens({ ballotId }: { ballotId: string }) {
           ballot without clashing.
         </p>
         <form onSubmit={issue}>
-          <div className="row">
-            <div className="grow">
-              <Field label="How many">
-                <input type="number" min={1} max={2000} value={count} name="pin_count"
-                       onChange={(e) => setCount(Number(e.target.value))} />
-              </Field>
-            </div>
-            <div className="grow">
-              <Field label="Label prefix" help="Optional. Numbered automatically.">
-                <input value={prefix} name="pin_prefix" onChange={(e) => setPrefix(e.target.value)} />
-              </Field>
-            </div>
-          </div>
+          <Field label="How many">
+            <input type="number" min={1} max={2000} value={count} name="pin_count"
+                   onChange={(e) => setCount(Number(e.target.value))} />
+          </Field>
           <button type="submit" className="primary" disabled={busy}>
             {busy ? 'Minting…' : `Issue ${count} PINs`}
           </button>
@@ -83,7 +73,6 @@ export function Tokens({ ballotId }: { ballotId: string }) {
               {fresh.map((t) => (
                 <div key={t.pin} className="pin-chip">
                   <div className="pin">{t.pin}</div>
-                  {t.label ? <div className="faint">{t.label}</div> : null}
                 </div>
               ))}
             </div>
@@ -107,13 +96,12 @@ export function Tokens({ ballotId }: { ballotId: string }) {
         <div className="scroll-x" style={{ marginTop: 12 }}>
           <table>
             <thead>
-              <tr><th>PIN</th><th>Label</th><th>Status</th><th>Voted</th><th /></tr>
+              <tr><th>PIN</th><th>Status</th><th>Voted</th><th /></tr>
             </thead>
             <tbody>
               {report.tokens.map((t) => (
                 <tr key={t.id}>
                   <td className="pin-display">{t.pin}</td>
-                  <td>{t.label}</td>
                   <td>
                     {t.status === 'disabled'
                       ? <Pill tone="defeated">disabled</Pill>

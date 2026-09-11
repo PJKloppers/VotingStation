@@ -1,0 +1,80 @@
+/* ==========================================================================
+   The live monitor.
+   ...........................................................................
+   Read from the back of a hall, usually projected. Bigger than the rest of the
+   app on purpose, and it uses the same tokens so it follows the theme.
+   ========================================================================== */
+
+.monitor { max-width: 1100px; }
+
+.monitor-head {
+  display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap;
+  padding-bottom: 14px; margin-bottom: 22px;
+  border-bottom: 1px solid var(--rule);
+}
+.monitor-head h1 { font-size: 2.1rem; }
+
+/* A dot rather than a word: it has to be legible at a glance from a distance,
+   and it is the kind of thing nobody reads until it turns red. */
+.link-state {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: 0.82rem; color: var(--ink-soft); white-space: nowrap;
+}
+.link-state .dot {
+  width: 9px; height: 9px; border-radius: 50%; background: var(--ink-faint);
+}
+.link-state.live .dot { background: var(--carried); animation: pulse 2.4s ease-in-out infinite; }
+.link-state.polling .dot { background: var(--pending); }
+.link-state.connecting .dot { background: var(--ink-faint); }
+
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) {
+  .link-state.live .dot { animation: none; }
+}
+
+.turnout {
+  display: flex; gap: 28px; flex-wrap: wrap;
+  margin-left: auto; text-align: right;
+}
+.turnout .figure { font-family: var(--serif); font-size: 1.9rem; line-height: 1.1; }
+.turnout .of { color: var(--ink-faint); font-size: 1.1rem; }
+.turnout .what {
+  font-size: 0.72rem; font-weight: 700; letter-spacing: 0.09em;
+  text-transform: uppercase; color: var(--ink-faint);
+}
+
+.monitor-grid {
+  display: grid; gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
+}
+
+.monitor-card { display: flex; flex-direction: column; }
+.monitor-card h2 { font-size: 1.25rem; margin-bottom: 2px; }
+.monitor-card .headline {
+  font-family: var(--serif); font-size: 1.5rem; line-height: 1.25;
+  margin: 10px 0 14px;
+}
+.monitor-card .headline.carried  { color: var(--carried); }
+.monitor-card .headline.defeated { color: var(--defeated); }
+.monitor-card .headline.waiting  { color: var(--ink-faint); font-weight: 400; }
+
+/* The bars are the app's, one size up, so a number is readable across a room. */
+.monitor-card .result-bar .label { font-size: 1.05rem; }
+.monitor-card .result-bar .count { font-size: 1rem; }
+.monitor-card .result-bar .track { height: 14px; }
+
+/* A vote landing is worth a flicker and nothing more. */
+.monitor-card.just-moved { animation: landed 900ms ease-out; }
+@keyframes landed {
+  0%   { box-shadow: 0 0 0 2px var(--accent), var(--shadow); }
+  100% { box-shadow: 0 0 0 0 transparent, var(--shadow); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .monitor-card.just-moved { animation: none; }
+}
+
+@media (max-width: 560px) {
+  .monitor-head h1 { font-size: 1.6rem; }
+  .turnout { margin-left: 0; text-align: left; gap: 20px; }
+  .monitor-grid { grid-template-columns: 1fr; }
+}

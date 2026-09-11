@@ -232,9 +232,12 @@ function BallotRow({ ballot }: { ballot: Ballot }) {
         {ballot.status === 'live'
           ? <a className="btn btn-primary small" href={href(`/vote/${ballot.id}`)}>Vote</a>
           : null}
-        {ballot.results_public
+        {/* The count stays with the organizer until the ballot closes -- a
+            running tally changes how people vote. The database enforces it;
+            this only keeps the page honest about what is there. */}
+        {ballot.status === 'closed' && ballot.results_public
           ? <a className="btn btn-ghost small" href={href(`/results/${ballot.id}`)}>Results</a>
-          : null}
+          : <span className="faint">Results are published when voting closes.</span>}
       </div>
     </div>
   );

@@ -60,6 +60,7 @@ export function Manage({ ballotId }: { ballotId: string }) {
           </div>
         </div>
         <div className="row-end row">
+          <a className="btn btn-ghost" href={href(`/live/${ballot.id}`)}>Live results</a>
           {ballot.status !== 'live'
             ? <button className="primary" onClick={() => void setStatus('live')}>Publish</button>
             : <button className="ghost" onClick={() => void setStatus('closed')}>Close voting</button>}
@@ -295,9 +296,9 @@ function Settings({ ballot, onSaved }: { ballot: Ballot; onSaved: () => void }) 
                onChange={(x) => set('require_all', x)} />
         <Check label="Show the result after voting" checked={v('show_results_after')}
                onChange={(x) => set('show_results_after', x)} />
-        <Check label="Publish the results" checked={v('results_public')}
+        <Check label="Publish the results once voting closes" checked={v('results_public')}
                onChange={(x) => set('results_public', x)}
-               help="Off keeps the tally to you until you turn it back on." />
+               help="While the ballot is live the tally is yours alone either way. Off keeps it private after it closes too." />
         <Field label="Auto-reload the waiting screen"
                help="Seconds. Leave at 0 for a large meeting — two hundred phones polling every ten seconds is twenty calls a second.">
           <input type="number" min={0} max={3600} value={v('lobby_refresh_seconds')}

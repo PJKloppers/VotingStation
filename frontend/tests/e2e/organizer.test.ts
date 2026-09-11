@@ -168,6 +168,44 @@ describe('creating a ballot in the browser', () => {
     await page.close();
   });
 
+test('the Issue PINs button mints them and lists them', async () => {
+    const page = await signedInPage();
+    await page.goto(`${origin}/#/manage/${createdBallotId}`, { waitUntil: 'networkidle0' });
+    await waitForText(page, title);
+    await clickByText(page, 'button', 'PINs');
+
+    await page.waitForSelector('input[name="pin_count"]', { timeout: 15000 });
+    await page.focus('input[name="pin_count"]');
+    // Select what is there and replace it, rather than appending to it.
+    await page.keyboard.down('Control');
+    await page.keyboard.press('KeyA');
+    await page.keyboard.up('Control');
+    await page.keyboard.type('3');
+
+    // The button says what it is about to do, so it is also the assertion.
+    await clickByText(page, 'button', 'Issue 3 PINs');
+
+    await page.waitForFunction(
+      () => document.querySelectorAll('.pin-chip').length === 3,
+      { timeout: 15000 },
+    );
+    const shown = await page.$$eval('.pin-chip .pin',
+      (nodes) => nodes.map((n) => (n as HTMLElement).innerText.trim()));
+    expect(shown).toHaveLength(3);
+    for (const pin of shown) expect(pin).toMatch(/^[0-9]{6}$/);
+
+    const report = await organizer.rpc('ballot_token_report', { p_ballot: createdBallotId });
+    const data = report.data as { issued: number; tokens: Array<Record<string, unknown>> };
+    expect(data.issued).toBe(3);
+    expect(data.tokens[0]).not.toHaveProperty('label');
+
+    // And they are on the page's own list, not only in the just-issued strip.
+    const rows = await page.$$eval('table tbody tr', (n) => n.length);
+    expect(rows).toBe(3);
+
+    await page.close();
+  });
+
   test('publishing it puts the organization in the public directory', async () => {
     const page = await signedInPage();
     await page.goto(`${origin}/#/manage/${createdBallotId}`, { waitUntil: 'networkidle0' });

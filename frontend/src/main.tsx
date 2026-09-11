@@ -6,6 +6,7 @@ import { useSession, signOut } from './lib/auth';
 import { href, parseRoute, useRoute } from './lib/router';
 import { Admin } from './pages/Admin';
 import { Home } from './pages/Home';
+import { Live } from './pages/Live';
 import { Manage } from './pages/Manage';
 import { Results } from './pages/Results';
 import { SignIn } from './pages/SignIn';
@@ -35,6 +36,12 @@ function App() {
         if (!ready) return <main><Spinner label="Checking your session" /></main>;
         if (!session) return <SignIn />;
         return first ? <Manage ballotId={first} /> : <Admin />;
+      case 'live':
+        // Signed in only: while a ballot is running its count is the
+        // organizer's alone, and the database agrees.
+        if (!ready) return <main><Spinner label="Checking your session" /></main>;
+        if (!session) return <SignIn />;
+        return first ? <Live ballotId={first} /> : <Admin />;
       default:
         return (
           <main className="narrow">
@@ -80,7 +87,7 @@ function App() {
       {page}
 
       <footer className="site">
-        Token voting for organizations · results are public, PINs are not
+        Token voting for organizations · results are published when voting closes
       </footer>
     </div>
   );

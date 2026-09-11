@@ -88,7 +88,7 @@ beforeAll(async () => {
   committeeOptions = mo!;
 
   const issued = await call<Array<{ pin: string }>>(organizer, 'issue_tokens', {
-    p_ballot: ballotId, p_count: 4, p_label_prefix: 'Voter',
+    p_ballot: ballotId, p_count: 4,
   });
   pins = issued.map((t) => t.pin);
   expect(pins).toHaveLength(4);
@@ -174,7 +174,7 @@ describe('a motion', () => {
     for (const a of answers) expect(a.ok).toBe(true);
 
     const tally = await call<{ questions: Array<{ id: string; tally: Record<string, unknown> }> }>(
-      voter, 'ballot_results', { p_ballot: ballotId });
+      organizer, 'ballot_results', { p_ballot: ballotId });
     const motion = tally.questions.find((q) => q.id === motionId)!.tally as {
       yes: number; no: number; abstain: number; decisive: number; carried: boolean;
     };
@@ -183,7 +183,7 @@ describe('a motion', () => {
 
   test('leaves the abstention out of the threshold', async () => {
     const tally = await call<{ questions: Array<{ id: string; tally: { cast: number; decisive: number } }> }>(
-      voter, 'ballot_results', { p_ballot: ballotId });
+      organizer, 'ballot_results', { p_ballot: ballotId });
     const motion = tally.questions.find((q) => q.id === motionId)!.tally;
     expect(motion.cast).toBe(4);
     expect(motion.decisive).toBe(3);
@@ -197,7 +197,7 @@ describe('a motion', () => {
     expect(answer.ok).toBe(true);
 
     const tally = await call<{ questions: Array<{ id: string; tally: { yes: number; no: number; cast: number } }> }>(
-      voter, 'ballot_results', { p_ballot: ballotId });
+      organizer, 'ballot_results', { p_ballot: ballotId });
     const motion = tally.questions.find((q) => q.id === motionId)!.tally;
     expect(motion).toMatchObject({ yes: 1, no: 2, cast: 4 });
   });
@@ -230,7 +230,7 @@ describe('an outright election', () => {
     })));
 
     const results = await call<{ questions: Array<{ id: string; tally: { winner: string; tied: boolean } }> }>(
-      voter, 'ballot_results', { p_ballot: ballotId });
+      organizer, 'ballot_results', { p_ballot: ballotId });
     const chair = results.questions.find((q) => q.id === chairId)!.tally;
     expect(chair.winner).toBe(option(chairOptions, 'Ann'));
     expect(chair.tied).toBe(false);
@@ -245,7 +245,7 @@ describe('an outright election', () => {
     });
 
     const results = await call<{ questions: Array<{ id: string; tally: { winner: string | null; majority_reached: boolean } }> }>(
-      voter, 'ballot_results', { p_ballot: ballotId });
+      organizer, 'ballot_results', { p_ballot: ballotId });
     const chair = results.questions.find((q) => q.id === chairId)!.tally;
     expect(chair.majority_reached).toBe(false);
     expect(chair.winner).toBeNull();
@@ -259,7 +259,7 @@ describe('an outright election', () => {
       p_option: null, p_abstain: true, p_fingerprint: 'fp-3',
     });
     const results = await call<{ questions: Array<{ id: string; tally: { total: number; abstain: number } }> }>(
-      voter, 'ballot_results', { p_ballot: ballotId });
+      organizer, 'ballot_results', { p_ballot: ballotId });
     const chair = results.questions.find((q) => q.id === chairId)!.tally;
     expect(chair.total).toBe(3);
     expect(chair.abstain).toBe(1);
@@ -301,7 +301,7 @@ describe('an X-of-N election', () => {
     })));
 
     const results = await call<{ questions: Array<{ id: string; tally: { winners: string[]; tied_at_cut: boolean; voters: number } }> }>(
-      voter, 'ballot_results', { p_ballot: ballotId });
+      organizer, 'ballot_results', { p_ballot: ballotId });
     const committee = results.questions.find((q) => q.id === committeeId)!.tally;
     expect(committee.voters).toBe(3);
     expect(committee.winners).toEqual([
@@ -319,7 +319,7 @@ describe('an X-of-N election', () => {
       p_fingerprint: 'fp-3',
     });
     const results = await call<{ questions: Array<{ id: string; tally: { tied_at_cut: boolean } }> }>(
-      voter, 'ballot_results', { p_ballot: ballotId });
+      organizer, 'ballot_results', { p_ballot: ballotId });
     const committee = results.questions.find((q) => q.id === committeeId)!.tally;
     expect(committee.tied_at_cut).toBe(true);
   });
@@ -342,7 +342,7 @@ describe('what a voter cannot reach', () => {
 
   test('minting itself a PIN', async () => {
     const { error } = await voter.rpc('issue_tokens', {
-      p_ballot: ballotId, p_count: 1, p_label_prefix: null,
+      p_ballot: ballotId, p_count: 1,
     });
     expect(error).not.toBeNull();
   });
@@ -374,7 +374,7 @@ describe('the organizer', () => {
     expect(result.ok).toBe(true);
 
     const results = await call<{ questions: Array<{ tally: { voters?: number; cast?: number } }> }>(
-      voter, 'ballot_results', { p_ballot: ballotId });
+      organizer, 'ballot_results', { p_ballot: ballotId });
     for (const q of results.questions) {
       expect(q.tally.voters ?? 0).toBe(0);
     }
@@ -424,6 +424,80 @@ describe('creating a ballot', () => {
   });
 });
 
+describe('a running ballot keeps its count to itself', () => {
+  beforeAll(async () => {
+    await organizer.from('ballots')
+      .update({ status: 'live', results_public: true }).eq('id', ballotId);
+  });
+
+  test('a reader with no PIN is refused while voting is open', async () => {
+    const answer = await call<{ ok: boolean; error?: string }>(
+      voter, 'ballot_results', { p_ballot: ballotId });
+    expect(answer.ok).toBe(false);
+    expect(answer.error).toContain('does not publish its results');
+  });
+
+  test('the vote rows are invisible too, so nobody can tally them by hand', async () => {
+    const { data } = await voter.from('votes_yes_no').select('id').eq('ballot_id', ballotId);
+    expect(data ?? []).toHaveLength(0);
+  });
+
+  test('the organizer sees it all the while -- this is the live monitor', async () => {
+    const answer = await call<{ ok: boolean; questions: unknown[] }>(
+      organizer, 'ballot_results', { p_ballot: ballotId });
+    expect(answer.ok).toBe(true);
+    expect(answer.questions.length).toBeGreaterThan(0);
+  });
+
+  test('closing it publishes the count', async () => {
+    await organizer.from('ballots').update({ status: 'closed' }).eq('id', ballotId);
+    const answer = await call<{ ok: boolean }>(voter, 'ballot_results', { p_ballot: ballotId });
+    expect(answer.ok).toBe(true);
+
+    const { data } = await voter.from('votes_yes_no').select('id').eq('ballot_id', ballotId);
+    expect((data ?? []).length).toBeGreaterThan(0);
+  });
+
+  test('a ballot that never publishes stays private even once closed', async () => {
+    await organizer.from('ballots').update({ results_public: false }).eq('id', ballotId);
+    const answer = await call<{ ok: boolean }>(voter, 'ballot_results', { p_ballot: ballotId });
+    expect(answer.ok).toBe(false);
+
+    await organizer.from('ballots')
+      .update({ results_public: true, status: 'live' }).eq('id', ballotId);
+  });
+});
+
+describe('PINs carry no label', () => {
+  test('the report hands back a PIN and its state, and nothing else about it', async () => {
+    const report = await call<{ tokens: Array<Record<string, unknown>> }>(
+      organizer, 'ballot_token_report', { p_ballot: ballotId });
+    expect(report.tokens.length).toBeGreaterThan(0);
+    expect(report.tokens[0]).not.toHaveProperty('label');
+  });
+
+  test('the lobby no longer greets a voter by one', async () => {
+    await organizer.from('ballots').update({ status: 'live' }).eq('id', ballotId);
+    const answer = await state(pins[1]!, 'fp-nolabel');
+    expect(answer.ok).toBe(true);
+    expect((answer as unknown as { voter: Record<string, unknown> }).voter)
+      .not.toHaveProperty('label');
+  });
+
+  test('the column is gone, not merely unused', async () => {
+    const { error } = await organizer.from('ballot_tokens')
+      .select('label').eq('ballot_id', ballotId);
+    expect(error).not.toBeNull();
+  });
+
+  test('issuing takes a count and nothing else', async () => {
+    const { error } = await organizer.rpc('issue_tokens', {
+      p_ballot: ballotId, p_count: 1, p_label_prefix: 'Delegate',
+    });
+    expect(error).not.toBeNull();
+  });
+});
+
 describe('finding a ballot from a PIN alone', () => {
   const lookup = (pin: string, fp: string) =>
     call<{ ok: boolean; error?: string; ballots?: Array<{ ballot_id: string; org_name: string }> }>(
@@ -467,7 +541,7 @@ describe('finding a ballot from a PIN alone', () => {
       org_id: orgId, slug: uniqueSlug('twin'), title: 'Twin Ballot', status: 'live',
     }).select('id').single();
     await organizer.from('ballot_tokens')
-      .insert({ ballot_id: other!.id, pin: pins[1]!, label: 'Twin' });
+      .insert({ ballot_id: other!.id, pin: pins[1]! });
 
     const answer = await lookup(pins[1]!, 'fp-lookup-twin');
     expect(answer.ok).toBe(true);

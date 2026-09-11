@@ -89,8 +89,14 @@ and the new ones are written beside them; the tally ignores the superseded ones.
 ## What is public and what is not
 
 - **Public** — organizations, published ballots, their questions and options,
-  and the vote rows of any ballot that publishes its results. The tally is the
-  point of the system.
+  and, **once a ballot has closed**, the vote rows of any ballot that publishes
+  its results.
+- **The organizer's alone while a ballot is running** — the count. A running
+  tally changes how people vote, so `app.votes_readable` answers false for
+  everyone but the owner until the ballot closes. That one function guards the
+  read policy on all three vote tables — which is also what Realtime checks per
+  subscriber, so nobody can watch the votes arrive either — and `ballot_results`
+  with it. Hiding the button would have left the URL serving it.
 - **Never public** — `ballot_tokens` (the PINs), `pin_attempts`, and
   `ballots.vote_salt`, which is excluded from every grant, so no client can
   read it even by accident. A `select('*')` on `ballots` is refused; the client
@@ -119,13 +125,28 @@ one candidate), repeats are dropped case-insensitively against what the question
 already has — the same way the unique index behind it matches — and the button
 says how many will actually be added.
 
+## Watching a vote come in
+
+`#/live/<ballot>` is the chair's monitor: every question at once, each stated in
+its own terms — carried or defeated, who leads, who is inside the cut — sized to
+be read from the back of a room. Signed in only, because while a ballot is
+running its count is nobody else's business.
+
+It does not assemble the tally from the change events. A write to a vote table
+is only a nudge to re-ask `ballot_results`, which stays the one place a count is
+derived, so a dropped, replayed or out-of-order event costs nothing but a
+redundant refresh. A fifteen-second poll runs underneath regardless — sockets
+die quietly on venue wifi, and a number left on a projector has to be right when
+nobody is watching it closely enough to notice it has gone stale. The dot in the
+header says which of the two is currently carrying it.
+
 ## Layout
 
 ```
 frontend/            the static client
   src/
-    lib/               supabase client, the API surface, routing, the rules
-    pages/             Home, Vote, Results, SignIn, Admin, Manage, Questions, Tokens
+    lib/               supabase client, the API surface, routing, the rules, the live feed
+    pages/             Home, Vote, Results, Live, SignIn, Admin, Manage, Questions, Tokens
     components/ui.tsx  the small shared pieces
     app.css            one stylesheet
   tests/
