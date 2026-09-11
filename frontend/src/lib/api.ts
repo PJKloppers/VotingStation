@@ -10,7 +10,7 @@ import { supabase } from './supabase';
 import { fingerprint } from './fingerprint';
 import type {
   Accepted, Ballot, BallotResults, HighestOutrightQuestion, HighestXQuestion,
-  Organization, OrgListing, PinMatch, QuestionOption, QuestionType, Refused,
+  Organization, PinMatch, QuestionOption, QuestionType, Refused,
   TokenReport, VoterState, YesNoQuestion,
 } from './types';
 
@@ -22,9 +22,9 @@ export class ApiError extends Error {}
  */
 const BALLOT_COLUMNS =
   'id, org_id, slug, title, description, status, mode, opens_at, closes_at, ' +
-  'allow_vote_change, require_all, anonymous, show_results_after, results_public, ' +
+  'allow_vote_change, require_all, require_all_pins, anonymous, show_results_after, results_public, ' +
   'intro_message, waiting_message, all_done_message, thank_you_message, ' +
-  'closed_message, already_voted_message, lobby_refresh_seconds';
+  'closed_message, already_voted_message, lobby_refresh_seconds, expires_at';
 
 function unwrap<T>(data: T | null, error: { message: string } | null): T {
   if (error) throw new ApiError(error.message);
@@ -109,43 +109,29 @@ export async function ballotById(id: string): Promise<Ballot | null> {
   return data as Ballot | null;
 }
 
-/**
- * The public directory: every organization with at least one published ballot,
- * and how many it has.
- *
- * `ballots!inner` makes the join decide which organizations appear, so one that
- * has only drafts is not listed at all. Only the ballot ids come back -- a
- * landing page should not pull every ballot of every organization to render a
- * list of names.
- */
-export async function publicOrganizations(): Promise<OrgListing[]> {
-  const { data, error } = await supabase
-    .from('organizations')
-    .select('id, slug, name, description, contact, ballots!inner(id)')
-    .neq('ballots.status', 'draft')
-    .order('name');
-  if (error) throw new ApiError(error.message);
-  return (data ?? []).map((row) => {
-    const { ballots, ...org } = row as typeof row & { ballots: unknown[] };
-    return { ...org, ballot_count: ballots.length } as OrgListing;
-  });
-}
-
-/**
- * One organization's published ballots. Drafts are excluded explicitly rather
- * than left to row level security, so the public view stays the public view
- * even when the organization's own owner is the one reading it.
- */
-export async function publicBallotsForOrg(orgId: string): Promise<Ballot[]> {
-  const { data, error } = await supabase
-    .from('ballots').select(BALLOT_COLUMNS)
-    .eq('org_id', orgId)
-    .neq('status', 'draft')
-    .order('created_at', { ascending: false });
-  return unwrap(data, error) as unknown as Ballot[];
-}
-
 /* ----------------------------------------------------------- the organizer */
+
+/** The two quotas the insert triggers enforce. */
+export interface Limits {
+  organizations_per_user: number;
+  ballots_per_organization: number;
+}
+
+/**
+ * How much the database will let this account hold, or null if it will not say.
+ *
+ * The numbers live in `app.max_organizations_per_user()` and
+ * `app.max_ballots_per_organization()` -- the same two functions the quota
+ * triggers read, so there is nothing to drift from. But `app` is deliberately
+ * off the REST surface, so they reach a client only through a wrapper in
+ * `public`; until `public.app_limits()` exists this comes back null and the
+ * dashboard counts without a ceiling rather than printing a number nobody
+ * checked against the database.
+ */
+export async function limits(): Promise<Limits | null> {
+  const { data, error } = await supabase.rpc('app_limits');
+  return error ? null : (data as Limits);
+}
 
 export async function myOrganizations(): Promise<Organization[]> {
   const { data, error } = await supabase
@@ -188,6 +174,13 @@ export async function createBallot(
 export async function updateBallot(id: string, patch: Partial<Ballot>): Promise<void> {
   const { error } = await supabase.from('ballots').update(patch).eq('id', id);
   if (error) throw new ApiError(error.message);
+}
+
+/** Pushes a ballot's expiry back out to the full retention window. */
+export async function renewBallot(id: string): Promise<string> {
+  const { data, error } = await supabase.rpc('renew_ballot', { p_ballot: id });
+  const answer = unwrap(data, error) as { ok: boolean; expires_at: string };
+  return answer.expires_at;
 }
 
 export async function deleteBallot(id: string): Promise<void> {
@@ -316,6 +309,20 @@ export async function setGate(
     p_ballot: ballotId, p_type: type, p_question: questionId, p_open: open, p_only: only,
   });
   if (error) throw new ApiError(error.message);
+}
+
+export interface Advanced {
+  ok: boolean;
+  error?: string;
+  action?: 'opened' | 'advanced' | 'finished';
+  closed?: { id: string; prompt: string };
+  opened?: { id: string; prompt: string };
+}
+
+/** Close what is open, open what is next, or close the ballot if there is none. */
+export async function advanceBallot(ballotId: string): Promise<Advanced> {
+  const { data, error } = await supabase.rpc('advance_ballot', { p_ballot: ballotId });
+  return unwrap(data, error);
 }
 
 export async function closeAllGates(ballotId: string): Promise<void> {

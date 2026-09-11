@@ -424,44 +424,529 @@ describe('creating a ballot', () => {
   });
 });
 
-describe('a running ballot keeps its count to itself', () => {
+describe('a ballot has a lifetime', () => {
+  test('it is born with thirty days on the clock', async () => {
+    const { data } = await organizer.from('ballots')
+      .select('id, created_at, expires_at')
+      .eq('id', ballotId).single();
+
+    const days = (new Date(data!.expires_at).getTime()
+                - new Date(data!.created_at).getTime()) / 86_400_000;
+    expect(days).toBeGreaterThan(29.9);
+    expect(days).toBeLessThan(30.1);
+  });
+
+  test('a voter is turned away the moment it expires, purge or no purge', async () => {
+    await organizer.from('ballots').update({ status: 'live' }).eq('id', ballotId);
+
+    // An owner may bring the expiry forward, never push it past the window.
+    await organizer.rpc('set_ballot_expiry', {
+      p_ballot: ballotId, p_when: new Date(Date.now() - 1000).toISOString(),
+    });
+    const dead = await state(pins[1]!, 'fp-expiry');
+    expect(dead.ok).toBe(false);
+    expect((dead as { error: string }).error).toContain('expired');
+
+    await organizer.rpc('renew_ballot', { p_ballot: ballotId });
+    const live = await state(pins[1]!, 'fp-expiry');
+    expect(live.ok).toBe(true);
+  });
+
+  test('an owner cannot push the expiry past the retention window', async () => {
+    const { data } = await organizer.rpc('set_ballot_expiry', {
+      p_ballot: ballotId,
+      p_when: new Date(Date.now() + 400 * 86_400_000).toISOString(),
+    });
+    expect((data as { ok: boolean }).ok).toBe(false);
+    expect((data as { error: string }).error).toContain('may not outlive');
+  });
+
+  test('renewing pushes the clock out from now', async () => {
+    const before = (await organizer.from('ballots')
+      .select('expires_at').eq('id', ballotId).single()).data!.expires_at;
+
+    const { data } = await organizer.rpc('renew_ballot', { p_ballot: ballotId });
+    const after = (data as { expires_at: string }).expires_at;
+
+    expect(new Date(after).getTime()).toBeGreaterThanOrEqual(new Date(before).getTime());
+    expect(new Date(after).getTime() - Date.now()).toBeGreaterThan(29.9 * 86_400_000);
+  });
+
+  test('nobody but the owner can renew one', async () => {
+    const { error } = await voter.rpc('renew_ballot', { p_ballot: ballotId });
+    expect(error).not.toBeNull();
+  });
+
+  test('a client cannot write the expiry directly', async () => {
+    const { error } = await organizer.from('ballots')
+      .update({ expires_at: '2099-01-01T00:00:00Z' }).eq('id', ballotId);
+    expect(error).not.toBeNull();
+  });
+
+  test('the purge takes an expired ballot and leaves the rest', async () => {
+    const { data: user } = await organizer.auth.getUser();
+    const { data: org } = await organizer.from('organizations')
+      .select('id').eq('owner_id', user.user!.id).limit(1).single();
+
+    const { data: doomed } = await organizer.from('ballots').insert({
+      org_id: org!.id, slug: uniqueSlug('expired'), title: 'Past it', status: 'live',
+    }).select('id').single();
+
+    const wound = await organizer.rpc('set_ballot_expiry', {
+      p_ballot: doomed!.id, p_when: new Date(Date.now() - 1000).toISOString(),
+    });
+    expect((wound.data as { ok: boolean }).ok).toBe(true);
+
+    const purged = await organizer.rpc('purge_expired_ballots');
+    expect((purged.data as { ballots: number }).ballots).toBeGreaterThanOrEqual(1);
+
+    const { data: gone } = await organizer.from('ballots')
+      .select('id').eq('id', doomed!.id).maybeSingle();
+    expect(gone).toBeNull();
+
+    const { data: kept } = await organizer.from('ballots')
+      .select('id').eq('id', ballotId).maybeSingle();
+    expect(kept).not.toBeNull();
+  });
+});
+
+describe('quotas', () => {
+  test('an organization holds at most twenty ballots', async () => {
+    const { data: user } = await organizer.auth.getUser();
+    const { data: org } = await organizer.from('organizations').insert({
+      owner_id: user.user!.id, slug: uniqueSlug('quota'), name: 'Quota Org',
+    }).select('id').single();
+
+    const rows = Array.from({ length: 20 }, (_, i) => ({
+      org_id: org!.id, slug: uniqueSlug(`q${i}`), title: `Ballot ${i}`,
+    }));
+    const { error: bulk } = await organizer.from('ballots').insert(rows);
+    expect(bulk).toBeNull();
+
+    const { error: overflow } = await organizer.from('ballots').insert({
+      org_id: org!.id, slug: uniqueSlug('one-too-many'), title: 'One too many',
+    });
+    expect(overflow?.message ?? '').toContain('at most 20 ballots');
+
+    await organizer.from('organizations').delete().eq('id', org!.id);
+  });
+
+  test('a user holds at most five organizations', async () => {
+    const { data: user } = await organizer.auth.getUser();
+    const ownerId = user.user!.id;
+
+    const { count: held } = await organizer.from('organizations')
+      .select('id', { count: 'exact', head: true }).eq('owner_id', ownerId);
+
+    const room = 5 - (held ?? 0);
+    const made: string[] = [];
+    for (let i = 0; i < room; i++) {
+      const { data } = await organizer.from('organizations')
+        .insert({ owner_id: ownerId, slug: uniqueSlug(`orgq${i}`), name: `Quota ${i}` })
+        .select('id').single();
+      made.push(data!.id);
+    }
+
+    const { error } = await organizer.from('organizations')
+      .insert({ owner_id: ownerId, slug: uniqueSlug('sixth'), name: 'Sixth' });
+    expect(error?.message ?? '').toContain('at most 5 organizations');
+
+    for (const id of made) await organizer.from('organizations').delete().eq('id', id);
+  });
+});
+
+describe('the chair steps through the ballot', () => {
+  type Step = { ok: boolean; action?: string; opened?: { id: string }; closed?: { id: string } };
+  const advance = () => call<Step>(organizer, 'advance_ballot', { p_ballot: ballotId });
+  const openNow = async () => {
+    const { data } = await organizer.from('ballot_questions')
+      .select('id, prompt, sort_order').eq('ballot_id', ballotId).eq('gate_open', true);
+    return (data ?? []).map((q) => q.id as string);
+  };
+
   beforeAll(async () => {
     await organizer.from('ballots')
-      .update({ status: 'live', results_public: true }).eq('id', ballotId);
+      .update({ status: 'live', mode: 'gated' }).eq('id', ballotId);
+    await organizer.rpc('renew_ballot', { p_ballot: ballotId });
+    await call(organizer, 'close_all_gates', { p_ballot: ballotId });
   });
 
-  test('a reader with no PIN is refused while voting is open', async () => {
-    const answer = await call<{ ok: boolean; error?: string }>(
-      voter, 'ballot_results', { p_ballot: ballotId });
+  test('the first step opens the first question and nothing else', async () => {
+    const step = await advance();
+    expect(step.ok).toBe(true);
+    expect(step.action).toBe('opened');
+    expect(step.opened!.id).toBe(motionId);
+    expect(await openNow()).toEqual([motionId]);
+  });
+
+  test('each step closes one and opens exactly the next', async () => {
+    const second = await advance();
+    expect(second.action).toBe('advanced');
+    expect(second.closed!.id).toBe(motionId);
+    expect(second.opened!.id).toBe(chairId);
+    expect(await openNow()).toEqual([chairId]);
+
+    const third = await advance();
+    expect(third.action).toBe('advanced');
+    expect(third.opened!.id).toBe(committeeId);
+    expect(await openNow()).toEqual([committeeId]);
+  });
+
+  test('the last step closes the ballot instead of opening anything', async () => {
+    const last = await advance();
+    expect(last.action).toBe('finished');
+    expect(last.closed!.id).toBe(committeeId);
+    expect(await openNow()).toEqual([]);
+
+    const { data } = await organizer.from('ballots')
+      .select('status').eq('id', ballotId).single();
+    expect(data!.status).toBe('closed');
+  });
+
+  test('a voter can no longer reach it once that has happened', async () => {
+    const answer = await state(pins[1]!, 'fp-stepped');
     expect(answer.ok).toBe(false);
-    expect(answer.error).toContain('does not publish its results');
   });
 
-  test('the vote rows are invisible too, so nobody can tally them by hand', async () => {
-    const { data } = await voter.from('votes_yes_no').select('id').eq('ballot_id', ballotId);
+  test('it never leaves two gates open, even from a messy start', async () => {
+    await organizer.from('ballots').update({ status: 'live' }).eq('id', ballotId);
+    await call(organizer, 'set_gate', {
+      p_ballot: ballotId, p_type: 'yes_no', p_question: motionId, p_open: true, p_only: false,
+    });
+    await call(organizer, 'set_gate', {
+      p_ballot: ballotId, p_type: 'highest_x', p_question: committeeId, p_open: true, p_only: false,
+    });
+    expect((await openNow()).length).toBe(2);
+
+    const step = await advance();
+    expect(step.ok).toBe(true);
+    expect((await openNow()).length).toBeLessThanOrEqual(1);
+  });
+
+  test('nobody but the owner may step it', async () => {
+    const { error } = await voter.rpc('advance_ballot', { p_ballot: ballotId });
+    expect(error).not.toBeNull();
+  });
+});
+
+describe('deleting a PIN', () => {
+  // Its own ballot: minting PINs on the shared one would change what every
+  // later test is counting.
+  let scratchBallot = '';
+  let scratchQuestion = '';
+
+  const pinsOn = async (n: number) =>
+    call<Array<{ pin: string }>>(organizer, 'issue_tokens', {
+      p_ballot: scratchBallot, p_count: n,
+    });
+
+  const castOn = (pin: string, choice: 'yes' | 'no') =>
+    call<Answer>(voter, 'cast_yes_no', {
+      p_ballot: scratchBallot, p_pin: pin, p_question: scratchQuestion,
+      p_choice: choice, p_fingerprint: `fp-${pin}`,
+    });
+
+  const rows = async (onlyStanding = false) => {
+    let q = organizer.from('votes_yes_no')
+      .select('id', { count: 'exact', head: true }).eq('ballot_id', scratchBallot);
+    if (onlyStanding) q = q.eq('valid', true);
+    return (await q).count ?? 0;
+  };
+
+  beforeAll(async () => {
+    const { data: b } = await organizer.from('ballots').insert({
+      org_id: orgId, slug: uniqueSlug('pindel'), title: 'PIN deletion',
+      status: 'live', mode: 'gated', allow_vote_change: true,
+    }).select('id').single();
+    scratchBallot = b!.id;
+
+    const { data: q } = await organizer.from('questions_yes_no').insert({
+      ballot_id: scratchBallot, prompt: 'Carry the motion', sort_order: 1,
+    }).select('id').single();
+    scratchQuestion = q!.id;
+
+    await call(organizer, 'set_gate', {
+      p_ballot: scratchBallot, p_type: 'yes_no',
+      p_question: scratchQuestion, p_open: true, p_only: true,
+    });
+  });
+
+  afterAll(async () => {
+    if (scratchBallot) await organizer.from('ballots').delete().eq('id', scratchBallot);
+  });
+
+  test('its votes go with it, not just the PIN', async () => {
+    const [minted] = await pinsOn(1);
+    expect((await castOn(minted!.pin, 'yes')).ok).toBe(true);
+    expect(await rows()).toBe(1);
+
+    const { data: tok } = await organizer.from('ballot_tokens')
+      .select('id').eq('ballot_id', scratchBallot).eq('pin', minted!.pin).single();
+
+    const { error } = await organizer.from('ballot_tokens').delete().eq('id', tok!.id);
+    expect(error).toBeNull();
+
+    // Not merely voided -- gone.
+    expect(await rows()).toBe(0);
+  });
+
+  test('it leaves everyone else\'s votes alone', async () => {
+    const minted = await pinsOn(2);
+    await castOn(minted[0]!.pin, 'yes');
+    await castOn(minted[1]!.pin, 'no');
+    expect(await rows()).toBe(2);
+
+    const { data: tok } = await organizer.from('ballot_tokens')
+      .select('id').eq('ballot_id', scratchBallot).eq('pin', minted[0]!.pin).single();
+    await organizer.from('ballot_tokens').delete().eq('id', tok!.id);
+
+    expect(await rows()).toBe(1);
+    const tally = await call<{ questions: Array<{ tally: { yes: number; no: number } }> }>(
+      organizer, 'ballot_results', { p_ballot: scratchBallot });
+    expect(tally.questions[0]!.tally).toMatchObject({ yes: 0, no: 1 });
+  });
+
+  test('resetting instead voids the votes and keeps the rows', async () => {
+    const before = await rows();
+    const [minted] = await pinsOn(1);
+    await castOn(minted!.pin, 'yes');
+    expect(await rows()).toBe(before + 1);
+
+    const { data: tok } = await organizer.from('ballot_tokens')
+      .select('id').eq('ballot_id', scratchBallot).eq('pin', minted!.pin).single();
+    await organizer.rpc('reset_token', { p_token: tok!.id, p_question: null });
+
+    // The row is still there, and no longer counted.
+    expect(await rows()).toBe(before + 1);
+    expect(await rows(true)).toBe(before);
+
+    // And the PIN may vote again.
+    expect((await castOn(minted!.pin, 'no')).ok).toBe(true);
+    expect(await rows(true)).toBe(before + 1);
+  });
+
+  test('and the PIN itself survives a reset', async () => {
+    const { count } = await organizer.from('ballot_tokens')
+      .select('id', { count: 'exact', head: true }).eq('ballot_id', scratchBallot);
+    expect(count).toBeGreaterThan(0);
+  });
+});
+
+describe('waiting for every PIN', () => {
+  type Step = { ok: boolean; error?: string; action?: string;
+                waiting?: { voted: number; eligible: number } };
+  const advance = () => call<Step>(organizer, 'advance_ballot', { p_ballot: ballotId });
+
+  beforeAll(async () => {
+    await organizer.from('ballots')
+      .update({ status: 'live', mode: 'gated', require_all_pins: true, allow_vote_change: true })
+      .eq('id', ballotId);
+    await organizer.rpc('renew_ballot', { p_ballot: ballotId });
+    await call(organizer, 'clear_ballot_votes', { p_ballot: ballotId });
+    await call(organizer, 'set_gate', {
+      p_ballot: ballotId, p_type: 'yes_no', p_question: motionId, p_open: true, p_only: true,
+    });
+  });
+
+  afterAll(async () => {
+    await organizer.from('ballots').update({ require_all_pins: false }).eq('id', ballotId);
+  });
+
+  test('the chair cannot step past a question nobody has answered', async () => {
+    const step = await advance();
+    expect(step.ok).toBe(false);
+    expect(step.error).toContain('waits for all of them');
+    expect(step.waiting!.voted).toBe(0);
+    expect(step.waiting!.eligible).toBe(4);
+  });
+
+  test('nor while one PIN is still outstanding', async () => {
+    for (const pin of pins.slice(0, 3)) {
+      const cast = await call<Answer>(voter, 'cast_yes_no', {
+        p_ballot: ballotId, p_pin: pin, p_question: motionId,
+        p_choice: 'yes', p_fingerprint: `fp-all-${pin}`,
+      });
+      expect(cast.ok).toBe(true);
+    }
+
+    const step = await advance();
+    expect(step.ok).toBe(false);
+    expect(step.waiting).toMatchObject({ voted: 3, eligible: 4 });
+
+    // and the gate is still open, so the last voter can still get in
+    const { data } = await organizer.from('questions_yes_no')
+      .select('gate_open').eq('id', motionId).single();
+    expect(data!.gate_open).toBe(true);
+  });
+
+  test('a disabled PIN is not waited for', async () => {
+    await organizer.from('ballot_tokens')
+      .update({ status: 'disabled' }).eq('ballot_id', ballotId).eq('pin', pins[3]!);
+
+    const step = await advance();
+    expect(step.ok).toBe(true);
+    expect(step.action).toBe('advanced');
+
+    await organizer.from('ballot_tokens')
+      .update({ status: 'active' }).eq('ballot_id', ballotId).eq('pin', pins[3]!);
+  });
+
+  test('once the last one votes, the step goes through', async () => {
+    await call(organizer, 'set_gate', {
+      p_ballot: ballotId, p_type: 'yes_no', p_question: motionId, p_open: true, p_only: true,
+    });
+    const blocked = await advance();
+    expect(blocked.ok).toBe(false);
+
+    const cast = await call<Answer>(voter, 'cast_yes_no', {
+      p_ballot: ballotId, p_pin: pins[3]!, p_question: motionId,
+      p_choice: 'no', p_fingerprint: 'fp-all-last',
+    });
+    expect(cast.ok).toBe(true);
+
+    const step = await advance();
+    expect(step.ok).toBe(true);
+    expect(step.action).toBe('advanced');
+  });
+
+  test('with the setting off the chair may step whenever they like', async () => {
+    await organizer.from('ballots').update({ require_all_pins: false }).eq('id', ballotId);
+    await call(organizer, 'set_gate', {
+      p_ballot: ballotId, p_type: 'highest_x', p_question: committeeId, p_open: true, p_only: true,
+    });
+    const step = await advance();
+    expect(step.ok).toBe(true);
+    await organizer.from('ballots').update({ require_all_pins: true }).eq('id', ballotId);
+  });
+
+  test('the tally says how many PINs are being waited for', async () => {
+    const results = await call<{ turnout: { issued: number; used: number; eligible: number } }>(
+      organizer, 'ballot_results', { p_ballot: ballotId });
+    expect(results.turnout.eligible).toBe(4);
+    expect(results.turnout.issued).toBe(4);
+  });
+});
+
+describe('a voter only sees a count once the question is finished', () => {
+  beforeAll(async () => {
+    await organizer.from('ballots')
+      .update({ status: 'live', show_results_after: true, allow_vote_change: true })
+      .eq('id', ballotId);
+    await organizer.rpc('renew_ballot', { p_ballot: ballotId });
+    await call(organizer, 'set_gate', {
+      p_ballot: ballotId, p_type: 'yes_no', p_question: motionId, p_open: true, p_only: true,
+    });
+  });
+
+  test('the receipt carries no tally while the gate is open', async () => {
+    const answer = await call<Answer & { results: unknown }>(voter, 'cast_yes_no', {
+      p_ballot: ballotId, p_pin: pins[0]!, p_question: motionId,
+      p_choice: 'yes', p_fingerprint: 'fp-settle',
+    });
+    expect(answer.ok).toBe(true);
+    expect(answer.results).toBeNull();
+  });
+
+  test('and the waiting screen does not either', async () => {
+    const answer = await state(pins[0]!, 'fp-settle');
+    expect(answer.ok).toBe(true);
+    expect((answer as unknown as { settled: unknown[] }).settled).toEqual([]);
+  });
+
+  test('closing the gate hands the voter the count', async () => {
+    await call(organizer, 'close_all_gates', { p_ballot: ballotId });
+
+    const answer = await state(pins[0]!, 'fp-settle');
+    const settled = (answer as unknown as {
+      settled: Array<{ id: string; tally: { yes: number } }>;
+    }).settled;
+
+    expect(settled.map((r) => r.id)).toContain(motionId);
+    expect(settled.find((r) => r.id === motionId)!.tally.yes).toBeGreaterThan(0);
+  });
+
+  test('a ballot that does not show voters results shows them nothing either way', async () => {
+    await organizer.from('ballots').update({ show_results_after: false }).eq('id', ballotId);
+    const answer = await state(pins[0]!, 'fp-settle');
+    expect((answer as unknown as { settled: unknown[] }).settled).toEqual([]);
+    await organizer.from('ballots').update({ show_results_after: true }).eq('id', ballotId);
+  });
+});
+
+describe('a question publishes when its own gate closes', () => {
+  // Publication is per question, not per ballot: a chair closes the first
+  // motion and announces it long before the last one is put.
+  const asVoter = () => call<{
+    ok: boolean; error?: string; withheld?: number;
+    questions?: Array<{ id: string }>;
+  }>(voter, 'ballot_results', { p_ballot: ballotId });
+
+  beforeAll(async () => {
+    await organizer.from('ballots')
+      .update({ status: 'live', mode: 'gated', results_public: true })
+      .eq('id', ballotId);
+    await organizer.rpc('renew_ballot', { p_ballot: ballotId });
+  });
+
+  test('a question still taking votes is withheld', async () => {
+    await call(organizer, 'set_gate', {
+      p_ballot: ballotId, p_type: 'yes_no', p_question: motionId, p_open: true, p_only: true,
+    });
+
+    const answer = await asVoter();
+    expect(answer.ok).toBe(true);
+    expect(answer.questions!.map((q) => q.id)).not.toContain(motionId);
+    expect(answer.withheld).toBeGreaterThanOrEqual(1);
+  });
+
+  test('and its rows cannot be tallied by hand instead', async () => {
+    const { data } = await voter.from('votes_yes_no')
+      .select('id').eq('question_id', motionId);
     expect(data ?? []).toHaveLength(0);
   });
 
-  test('the organizer sees it all the while -- this is the live monitor', async () => {
-    const answer = await call<{ ok: boolean; questions: unknown[] }>(
-      organizer, 'ballot_results', { p_ballot: ballotId });
-    expect(answer.ok).toBe(true);
-    expect(answer.questions.length).toBeGreaterThan(0);
-  });
+  test('closing that gate publishes it, and only it', async () => {
+    // The motion closes; the election opens. One is finished, one is not.
+    await call(organizer, 'set_gate', {
+      p_ballot: ballotId, p_type: 'highest_outright', p_question: chairId,
+      p_open: true, p_only: true,
+    });
 
-  test('closing it publishes the count', async () => {
-    await organizer.from('ballots').update({ status: 'closed' }).eq('id', ballotId);
-    const answer = await call<{ ok: boolean }>(voter, 'ballot_results', { p_ballot: ballotId });
-    expect(answer.ok).toBe(true);
+    const answer = await asVoter();
+    const shown = answer.questions!.map((q) => q.id);
+    expect(shown).toContain(motionId);
+    expect(shown).not.toContain(chairId);
+    expect(answer.withheld).toBe(1);
 
-    const { data } = await voter.from('votes_yes_no').select('id').eq('ballot_id', ballotId);
+    const { data } = await voter.from('votes_yes_no')
+      .select('id').eq('question_id', motionId);
     expect((data ?? []).length).toBeGreaterThan(0);
   });
 
-  test('a ballot that never publishes stays private even once closed', async () => {
+  test('the organizer reads every question throughout', async () => {
+    const answer = await call<{ ok: boolean; withheld: number; questions: unknown[] }>(
+      organizer, 'ballot_results', { p_ballot: ballotId });
+    expect(answer.ok).toBe(true);
+    expect(answer.withheld).toBe(0);
+    expect(answer.questions.length).toBe(3);
+  });
+
+  test('closing the ballot publishes what is left', async () => {
+    await organizer.from('ballots').update({ status: 'closed' }).eq('id', ballotId);
+    const answer = await asVoter();
+    expect(answer.withheld).toBe(0);
+    expect(answer.questions!.length).toBe(3);
+  });
+
+  test('a ballot that does not publish stays private, gates or no gates', async () => {
     await organizer.from('ballots').update({ results_public: false }).eq('id', ballotId);
-    const answer = await call<{ ok: boolean }>(voter, 'ballot_results', { p_ballot: ballotId });
+
+    const answer = await asVoter();
     expect(answer.ok).toBe(false);
+    expect(answer.error).toContain('does not publish its results');
+
+    const { data } = await voter.from('votes_yes_no').select('id').eq('ballot_id', ballotId);
+    expect(data ?? []).toHaveLength(0);
 
     await organizer.from('ballots')
       .update({ results_public: true, status: 'live' }).eq('id', ballotId);
@@ -572,84 +1057,39 @@ describe('finding a ballot from a PIN alone', () => {
   });
 });
 
-describe('the public directory', () => {
-  // An organization whose only ballot is a draft. It must not be listed.
-  let quietOrg: string;
-  let quietBallot: string;
+describe('the quotas are the database\'s own numbers', () => {
+  test('a client can read them without reaching into the app schema', async () => {
+    const limits = await call<{ organizations_per_user: number; ballots_per_organization: number }>(
+      voter, 'app_limits', {});
+    expect(limits.organizations_per_user).toBe(5);
+    expect(limits.ballots_per_organization).toBe(20);
+  });
 
-  beforeAll(async () => {
+  test('and they are the same numbers the triggers refuse on', async () => {
+    const limits = await call<{ ballots_per_organization: number }>(voter, 'app_limits', {});
+
     const { data: user } = await organizer.auth.getUser();
-    const { data: org } = await organizer.from('organizations')
-      .insert({ owner_id: user.user!.id, slug: uniqueSlug('quiet'), name: 'Quiet Org' })
-      .select('id').single();
-    quietOrg = org!.id;
-    const { data: draft } = await organizer.from('ballots')
-      .insert({ org_id: quietOrg, slug: uniqueSlug('draft'), title: 'Not published', status: 'draft' })
-      .select('id').single();
-    quietBallot = draft!.id;
+    const { data: org } = await organizer.from('organizations').insert({
+      owner_id: user.user!.id, slug: uniqueSlug('limitcheck'), name: 'Limit check',
+    }).select('id').single();
+
+    const rows = Array.from({ length: limits.ballots_per_organization }, (_, i) => ({
+      org_id: org!.id, slug: uniqueSlug(`l${i}`), title: `Ballot ${i}`,
+    }));
+    expect((await organizer.from('ballots').insert(rows)).error).toBeNull();
+
+    const { error } = await organizer.from('ballots').insert({
+      org_id: org!.id, slug: uniqueSlug('over'), title: 'Over',
+    });
+    expect(error?.message ?? '')
+      .toContain(`at most ${limits.ballots_per_organization} ballots`);
+
+    await organizer.from('organizations').delete().eq('id', org!.id);
   });
 
-  afterAll(async () => {
-    if (quietBallot) await organizer.from('ballots').delete().eq('id', quietBallot);
-    if (quietOrg) await organizer.from('organizations').delete().eq('id', quietOrg);
-  });
-
-  /** The query behind the landing page, as an anonymous reader runs it. */
-  const directory = async () => {
-    const { data, error } = await voter
-      .from('organizations')
-      .select('id, slug, name, description, contact, ballots!inner(id)')
-      .neq('ballots.status', 'draft')
-      .order('name');
-    if (error) throw new Error(error.message);
-    return (data ?? []) as Array<{ id: string; ballots: unknown[] }>;
-  };
-
-  test('lists an organization that has published a ballot', async () => {
-    await organizer.from('ballots').update({ status: 'live' }).eq('id', ballotId);
-    const rows = await directory();
-    expect(rows.map((r) => r.id)).toContain(orgId);
-  });
-
-  test('counts only the published ballots against it', async () => {
-    const rows = await directory();
-    const mine = rows.find((r) => r.id === orgId)!;
-    expect(mine.ballots.length).toBeGreaterThan(0);
-
-    const { data: drafts } = await voter.from('ballots')
-      .select('id').eq('org_id', orgId).eq('status', 'draft');
-    expect(drafts ?? []).toHaveLength(0);
-  });
-
-  test('leaves out an organization whose only ballot is a draft', async () => {
-    const rows = await directory();
-    expect(rows.map((r) => r.id)).not.toContain(quietOrg);
-  });
-
-  test('lists it as soon as that ballot is published, and drops it again', async () => {
-    await organizer.from('ballots').update({ status: 'live' }).eq('id', quietBallot);
-    expect((await directory()).map((r) => r.id)).toContain(quietOrg);
-
-    await organizer.from('ballots').update({ status: 'draft' }).eq('id', quietBallot);
-    expect((await directory()).map((r) => r.id)).not.toContain(quietOrg);
-  });
-
-  test('hands a reader only the published ballots of one organization', async () => {
-    await organizer.from('ballots').update({ status: 'live' }).eq('id', quietBallot);
-    const { data, error } = await voter.from('ballots')
-      .select('id, status')
-      .eq('org_id', quietOrg)
-      .neq('status', 'draft')
-      .order('created_at', { ascending: false });
-    expect(error).toBeNull();
-    expect(data).toHaveLength(1);
-    expect(data![0]!.id).toBe(quietBallot);
-    await organizer.from('ballots').update({ status: 'draft' }).eq('id', quietBallot);
-  });
-
-  test('never exposes the owner behind an organization in that listing', async () => {
-    const rows = await directory();
-    expect(rows[0]).not.toHaveProperty('owner_id');
+  test('the app schema itself stays off the API', async () => {
+    const { error } = await voter.rpc('max_ballots_per_organization');
+    expect(error).not.toBeNull();
   });
 });
 

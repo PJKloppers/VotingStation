@@ -1,0 +1,12 @@
+<!-- iOS applies its own squircle and does not honour transparency, so this one
+     is full bleed like the maskable. the squircle crops far less than a circle
+     though, so the tick stays near full size rather than dropping to the
+     circular safe zone, which would leave it visibly small beside its
+     neighbours on a home screen. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" fill="#1e5f74"/>
+  <g transform="translate(256 256) scale(0.94) translate(-256 -264)">
+    <path d="M128 264l88 88L384 176" fill="none" stroke="#ffffff" stroke-width="51.2"
+          stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

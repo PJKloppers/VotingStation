@@ -58,8 +58,19 @@ export function Results({ ballotId }: { ballotId: string }) {
         </div>
       </div>
 
+      {data.withheld > 0 ? (
+        <Banner kind="info">
+          {data.withheld} question{data.withheld === 1 ? ' is' : 's are'} still open.
+          Each one publishes when the chair closes it.
+        </Banner>
+      ) : null}
+
       {data.questions.length === 0
-        ? <Empty>This ballot has no questions yet.</Empty>
+        ? <Empty>
+            {data.withheld > 0
+              ? 'Nothing has been published yet.'
+              : 'This ballot has no questions yet.'}
+          </Empty>
         : <div className="stack">
             {data.questions.map((q) => (
               <Card key={q.id}><QuestionTally result={q} /></Card>

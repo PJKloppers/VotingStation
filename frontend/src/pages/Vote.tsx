@@ -162,6 +162,10 @@ export function Vote({ ballotId }: { ballotId: string }) {
             <h2>{screen.message}</h2>
             {screen.results ? (
               <div style={{ marginTop: 18 }}><QuestionTally result={screen.results} /></div>
+            ) : state?.ballot.show_results_after ? (
+              <p className="faint" style={{ marginTop: 12 }}>
+                The count appears here once the chair closes this question.
+              </p>
             ) : null}
             <div className="row" style={{ marginTop: 18 }}>
               <button className="primary" onClick={() => setScreen({ at: 'lobby' })}>
@@ -277,7 +281,29 @@ function Lobby({ state, busy, onReload, onPick, onSignOut }: {
           </button>
         </Card>
       )}
+
+      <Settled results={state.settled} />
     </>
+  );
+}
+
+/**
+ * The counts for questions this voter has answered and the chair has since
+ * closed. Nothing appears here while a question is still taking votes -- a
+ * running tally is exactly what would change the next person's mind.
+ */
+function Settled({ results }: { results: QuestionResult[] }) {
+  if (results.length === 0) return null;
+  return (
+    <Card>
+      <h2>Results</h2>
+      <p className="faint" style={{ marginBottom: 14 }}>
+        Questions you answered that are now closed.
+      </p>
+      <div className="stack">
+        {results.map((r) => <QuestionTally key={r.id} result={r} />)}
+      </div>
+    </Card>
   );
 }
 

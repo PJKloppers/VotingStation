@@ -5,8 +5,12 @@
  * and writes a directory of hashed static files. `publicPath: './'` keeps every
  * reference relative, so the same build works at the domain root and under the
  * /VotingStation/ prefix GitHub Pages serves it from.
+ *
+ * `public/` is copied over the top of that, unhashed and unrenamed, for the
+ * files whose names other things already know: the web app manifest and its
+ * icons.
  */
-import { rm } from 'node:fs/promises';
+import { cp, rm } from 'node:fs/promises';
 
 const DEFAULTS = {
   SUPABASE_URL: 'https://ukkgodlkxoyilyagtttj.supabase.co',
@@ -28,6 +32,27 @@ define['process.env.NODE_ENV'] = JSON.stringify(dev ? 'development' : 'productio
 
 await rm('dist', { recursive: true, force: true });
 
+/**
+ * Keeps the PWA tags out of the bundler's hands.
+ *
+ * Bun's HTML loader does follow `<link rel="manifest">` and
+ * `<link rel="apple-touch-icon">` -- it fails the build outright when it cannot
+ * resolve them -- and would otherwise emit them under hashed names. That is
+ * wrong for both: the manifest's own `icons[].src` entries are JSON the
+ * bundler never reads, so a hashed icon leaves the manifest pointing at
+ * nothing, and iOS wants one predictable apple-touch-icon. Marked external,
+ * the hrefs pass through verbatim and `public/` supplies the files.
+ */
+const passThrough: import('bun').BunPlugin = {
+  name: 'pwa-assets',
+  setup(build) {
+    build.onResolve({ filter: /^\.\/(manifest\.webmanifest|icons\/)/ }, (args) => ({
+      path: args.path,
+      external: true,
+    }));
+  },
+};
+
 const result = await Bun.build({
   entrypoints: ['src/index.html'],
   outdir: 'dist',
@@ -36,11 +61,32 @@ const result = await Bun.build({
   sourcemap: dev ? 'inline' : 'none',
   publicPath: './',
   define,
+  plugins: [passThrough],
 });
 
 if (!result.success) {
   for (const log of result.logs) console.error(log);
   process.exit(1);
+}
+
+// Everything in public/ ships byte for byte under the name it already has:
+// the manifest, and the icons the manifest and the iOS tag name. Their paths
+// are relative throughout -- `start_url` and `scope` are "./", resolved
+// against the manifest's own URL -- so the same files install from the domain
+// root and from under /VotingStation/. `id` is deliberately absent, because it
+// resolves against the origin rather than the manifest and any value we could
+// write would pin the app to one of those two.
+await cp('public', 'dist', { recursive: true });
+
+// A manifest whose icons 404 is not an invalid manifest; the browser simply
+// declines to offer an install and says nothing. Cheaper to find here.
+const manifest = await Bun.file('dist/manifest.webmanifest').json();
+for (const icon of manifest.icons as Array<{ src: string }>) {
+  const file = `dist/${icon.src.replace(/^\.\//, '')}`;
+  if (!(await Bun.file(file).exists())) {
+    console.error(`manifest names ${icon.src}, which is not in dist/`);
+    process.exit(1);
+  }
 }
 
 // GitHub Pages serves 404.html for unknown paths. Ours is the app itself, so a

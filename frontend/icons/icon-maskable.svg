@@ -1,0 +1,16 @@
+<!-- the maskable variant. the launcher supplies the shape, so the teal goes
+     edge to edge with no corner radius of our own, and the tick shrinks to sit
+     well inside the safe zone -- a circle of 80% the icon's width.
+     the tick's farthest point is 0.353 of the width from its centre at full
+     size, which clears the 0.40 safe radius by too little to trust a launcher
+     that crops harder than the spec. at 0.85 it sits at 0.30, three quarters
+     of the way out, and survives a circle. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" fill="#1e5f74"/>
+  <!-- the tick's own centre is (256 264), not (256 256); this lands it on the
+       icon's centre before scaling about it. -->
+  <g transform="translate(256 256) scale(0.85) translate(-256 -264)">
+    <path d="M128 264l88 88L384 176" fill="none" stroke="#ffffff" stroke-width="51.2"
+          stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

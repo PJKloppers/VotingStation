@@ -128,12 +128,27 @@ describe('the voter', () => {
     await waitForText(page, 'Yes');
     await clickByText(page, '.choice', 'Yes');
 
-    // show_results_after is on, so the receipt carries the count.
+    // show_results_after is on, but the gate is necessarily open at the moment
+    // a vote is cast, so the receipt carries no count -- only the promise of one.
     await waitForText(page, 'Thank you');
-    await waitForText(page, 'Carried');
+    await waitForText(page, 'once the chair closes this question');
+    const receipt = await page.evaluate(() => document.body.innerText);
+    expect(receipt).not.toContain('Carried');
 
     await clickByText(page, 'button', 'Back to the ballot');
     await waitForText(page, 'Change');       // allow_vote_change is on
+
+    // The chair closes it, and the count appears on the waiting screen.
+    await organizer.rpc('close_all_gates', { p_ballot: ballotId });
+    await clickByText(page, 'button', 'Reload');
+    await waitForText(page, 'Results');
+    await waitForText(page, 'Carried');
+
+    await organizer.rpc('set_gate', {
+      p_ballot: ballotId, p_type: 'yes_no', p_question: motionId, p_open: true, p_only: true,
+    });
+    await clickByText(page, 'button', 'Reload');
+    await waitForText(page, 'Change');
 
     await organizer.from('ballots').update({ allow_vote_change: false }).eq('id', ballotId);
     await clickByText(page, 'button', 'Reload');
@@ -226,26 +241,43 @@ describe('the front page', () => {
     expect(page.url()).not.toContain('#/vote/');
     await page.close();
   });
-
-  test('still lists the organizations underneath', async () => {
-    const page = await newPage();
-    await page.goto(`${origin}/#/`, { waitUntil: 'networkidle0' });
-    await waitForText(page, 'Or browse organizations');
-    await page.close();
-  });
 });
 
 describe('the results page', () => {
-  test('gives a reader nothing while voting is still open', async () => {
+  test('withholds a question that is still taking votes', async () => {
+    await organizer.from('ballots')
+      .update({ status: 'live', results_public: true }).eq('id', ballotId);
+    await organizer.rpc('set_gate', {
+      p_ballot: ballotId, p_type: 'yes_no', p_question: motionId, p_open: true, p_only: true,
+    });
+
     const page = await newPage();
     await page.goto(`${origin}/#/results/${ballotId}`, { waitUntil: 'networkidle0' });
-    await waitForText(page, 'does not publish its results');
+    await waitForText(page, 'still open');
+
     const text = await page.evaluate(() => document.body.innerText);
-    expect(text).not.toContain('Ann Meyer');
+    expect(text).not.toContain('Adopt the minutes');
     await page.close();
   });
 
-  test('publishes the count once the ballot closes', async () => {
+  test('publishes each question as the chair closes it', async () => {
+    // The motion closes, the election opens: one finished, one not.
+    await organizer.rpc('set_gate', {
+      p_ballot: ballotId, p_type: 'highest_outright', p_question: chairId,
+      p_open: true, p_only: true,
+    });
+
+    const page = await newPage();
+    await page.goto(`${origin}/#/results/${ballotId}`, { waitUntil: 'networkidle0' });
+    await waitForText(page, 'Adopt the minutes');
+
+    const text = await page.evaluate(() => document.body.innerText);
+    expect(text).not.toContain('Elect the chair');
+    expect(text).toContain('still open');
+    await page.close();
+  });
+
+  test('shows the lot once the ballot closes', async () => {
     await organizer.from('ballots').update({ status: 'closed' }).eq('id', ballotId);
 
     const page = await newPage();
@@ -254,6 +286,9 @@ describe('the results page', () => {
     await waitForText(page, 'Adopt the minutes');
     await waitForText(page, 'Elect the chair');
     await waitForText(page, 'Ann Meyer');
+
+    const text = await page.evaluate(() => document.body.innerText);
+    expect(text).not.toContain('still open');
     await page.close();
 
     await organizer.from('ballots').update({ status: 'live' }).eq('id', ballotId);

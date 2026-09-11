@@ -52,17 +52,16 @@ least* two thirds. Storing `0.667` would have quietly failed a 2-of-3 vote.
 ## Arriving
 
 A voter arrives holding a PIN and nothing else, so the front page asks for that
-and nothing else. A PIN is unique *per ballot* rather than globally, so
-`find_ballots_for_pin` resolves it: one match goes straight through to the
-lobby, several ask which, none says so. The PIN is handed to the ballot page in
-memory, never through the URL or storage — a reload asks for it again, which is
-the right way round.
+and nothing else — there is no directory to browse. A PIN is unique *per ballot*
+rather than globally, so `find_ballots_for_pin` resolves it: one match goes
+straight through to the lobby, several ask which, none says so. The PIN is
+handed to the ballot page in memory, never through the URL or storage — a reload
+asks for it again, which is the right way round.
 
 That lookup widens the guessing surface, since one guess now probes every
 published ballot at once. The counterweight is the same lock-out the ballot
 itself uses — twelve failed lookups per browser per fifteen minutes, failures
-only — and the answer carries nothing a reader could not already get from the
-public directory below it: a ballot's title and whose it is.
+only — and the answer carries only a ballot's title and whose it is.
 
 ## How a meeting runs
 
@@ -85,18 +84,32 @@ since closed.
 
 Replacing a vote never deletes anything. The standing rows go `valid = false`
 and the new ones are written beside them; the tally ignores the superseded ones.
+The one exception is deleting a PIN, which takes its votes with it — a vote
+whose PIN no longer exists cannot be traced to anything, so keeping it is not
+keeping a record, it is keeping a number. `reset_token` is the way to void a
+PIN's votes and keep the trail.
+
+**One button runs the meeting.** `advance_ballot` closes what is open, opens
+what is next, and closes the ballot when there is no next — atomically, so there
+is never a moment with two gates open or none. With **all PINs must vote** on,
+it refuses to step past a question while an active PIN has not answered it, and
+says how many are outstanding; the Live tab shows the same count per question.
 
 ## What is public and what is not
 
 - **Public** — organizations, published ballots, their questions and options,
-  and, **once a ballot has closed**, the vote rows of any ballot that publishes
-  its results.
-- **The organizer's alone while a ballot is running** — the count. A running
-  tally changes how people vote, so `app.votes_readable` answers false for
-  everyone but the owner until the ballot closes. That one function guards the
-  read policy on all three vote tables — which is also what Realtime checks per
-  subscriber, so nobody can watch the votes arrive either — and `ballot_results`
-  with it. Hiding the button would have left the URL serving it.
+  and the votes on any question that has **finished**, if the ballot publishes
+  results at all.
+- **The organizer's alone until then** — the count on a question still taking
+  votes. A running tally changes how people vote. `app.question_public` is the
+  whole rule: a question is public when the ballot publishes results *and* that
+  question can no longer be voted on — its gate is closed, or the ballot is. So
+  a chair can close the first motion and announce it while the rest are still to
+  come. The same function guards the read policy on all three vote tables —
+  which is what Realtime checks per subscriber, so nobody can watch the votes
+  arrive either — and `ballot_results`, which reports how many questions it is
+  withholding rather than handing back a short list that reads as the whole
+  ballot. Hiding the button would have left the URL serving it.
 - **Never public** — `ballot_tokens` (the PINs), `pin_attempts`, and
   `ballots.vote_salt`, which is excluded from every grant, so no client can
   read it even by accident. A `select('*')` on `ballots` is refused; the client
@@ -125,6 +138,29 @@ one candidate), repeats are dropped case-insensitively against what the question
 already has — the same way the unique index behind it matches — and the button
 says how many will actually be added.
 
+## Ballots do not live forever
+
+Every ballot is deleted **30 days** after it is made, by a `pg_cron` job that
+runs daily and leaves a receipt in `purge_log`. The window, and the quotas
+below, are each one function in the `app` schema rather than a literal repeated
+through triggers and defaults:
+
+| | |
+| --- | --- |
+| `app.ballot_retention()` | 30 days |
+| `app.max_organizations_per_user()` | 5 |
+| `app.max_ballots_per_organization()` | 20 |
+
+Nothing vanishes quietly: the ballot's own page carries the countdown and a
+**Renew** button that pushes the full window out again. An owner may bring an
+expiry forward but never past the cap, which is why `expires_at` is readable but
+not writable from a client. A ballot stops taking votes the moment it expires
+rather than whenever the purge next runs.
+
+`public.app_limits()` exposes the two quotas so a form can say "4 of 5
+organizations" without a constant in the client drifting from the database that
+enforces it.
+
 ## Watching a vote come in
 
 `#/live/<ballot>` is the chair's monitor: every question at once, each stated in
@@ -149,6 +185,8 @@ frontend/            the static client
     pages/             Home, Vote, Results, Live, SignIn, Admin, Manage, Questions, Tokens
     components/ui.tsx  the small shared pieces
     app.css            one stylesheet
+  public/              copied into dist/ verbatim: the manifest and its icons
+  icons/               the icon artwork as SVG, and the script that renders it
   tests/
     unit/              the selection rules and the router, no network
     integration/       the whole system against the real database

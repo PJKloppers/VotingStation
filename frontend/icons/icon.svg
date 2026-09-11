@@ -1,0 +1,8 @@
+<!-- the app mark, scaled up from the inline favicon in src/index.html: a teal
+     rounded square with a white tick. corners are transparent, because an
+     "any" icon supplies its own shape. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="112" fill="#1e5f74"/>
+  <path d="M128 264l88 88L384 176" fill="none" stroke="#ffffff" stroke-width="51.2"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

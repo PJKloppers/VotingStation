@@ -87,7 +87,7 @@ function App() {
       {page}
 
       <footer className="site">
-        Token voting for organizations · results are published when voting closes
+        Token voting for organizations · each question publishes when its gate closes
       </footer>
     </div>
   );

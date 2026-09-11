@@ -119,7 +119,12 @@ export function Tokens({ ballotId }: { ballotId: string }) {
                         Reset
                       </button>
                       <button className="danger small"
-                              onClick={() => { if (confirm(`Delete PIN ${t.pin}?`)) void api.deleteToken(t.id).then(load); }}>
+                              onClick={() => {
+                                const warn = t.questions_voted > 0
+                                  ? `Delete PIN ${t.pin}? Its ${t.questions_voted} vote(s) are deleted with it. Reset instead to void them and keep the trail.`
+                                  : `Delete PIN ${t.pin}?`;
+                                if (confirm(warn)) void api.deleteToken(t.id).then(load);
+                              }}>
                         Delete
                       </button>
                     </div>

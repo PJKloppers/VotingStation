@@ -20,7 +20,6 @@ let browser: Browser;
 let origin: string;
 let stop: () => void;
 let organizer: SupabaseClient;
-let orgName: string;
 let createdBallotId = '';
 
 const title = `Committee Meeting ${Date.now().toString(36)}`;
@@ -36,11 +35,12 @@ beforeAll(async () => {
   organizer = await organizerClient();
   const { data: user } = await organizer.auth.getUser();
   const { data: org } = await organizer.from('organizations')
-    .select('id, name').eq('owner_id', user.user!.id).limit(1).maybeSingle();
+    .select('id').eq('owner_id', user.user!.id).limit(1).maybeSingle();
 
-  orgName = org?.name ?? (await organizer.from('organizations')
-    .insert({ owner_id: user.user!.id, slug: uniqueSlug('e2e-org'), name: 'E2E Org' })
-    .select('name').single()).data!.name;
+  if (!org) {
+    await organizer.from('organizations')
+      .insert({ owner_id: user.user!.id, slug: uniqueSlug('e2e-org'), name: 'E2E Org' });
+  }
 
   browser = await launchBrave();
 });
@@ -206,7 +206,7 @@ test('the Issue PINs button mints them and lists them', async () => {
     await page.close();
   });
 
-  test('publishing it puts the organization in the public directory', async () => {
+  test('publishing it opens the ballot to voters', async () => {
     const page = await signedInPage();
     await page.goto(`${origin}/#/manage/${createdBallotId}`, { waitUntil: 'networkidle0' });
     await waitForText(page, title);
@@ -214,16 +214,177 @@ test('the Issue PINs button mints them and lists them', async () => {
     await clickByText(page, 'button', 'Publish');
     await page.waitForSelector('.pill.live', { timeout: 15000 });
 
-    // The front page lists organizations; the ballots arrive when one is opened.
+    const { data } = await organizer.from('ballots')
+      .select('status').eq('id', createdBallotId).single();
+    expect(data!.status).toBe('live');
+
+    // The front page asks for a PIN and nothing else; a published ballot is
+    // reached by its own link, not by browsing.
     await page.goto(`${origin}/#/`, { waitUntil: 'networkidle0' });
-    await waitForText(page, orgName);
+    await page.waitForSelector('.pin-entry', { timeout: 15000 });
+    const body = await page.evaluate(() => document.body.innerText);
+    expect(body).not.toContain(title);
+    expect(body).not.toContain('browse organizations');
 
-    const before = await page.evaluate(() => document.body.innerText);
-    expect(before).not.toContain(title);
+    await page.close();
+  });
+});
 
-    await clickByText(page, 'button', orgName);
-    await waitForText(page, title);
+describe('deleting a ballot', () => {
+  let doomed = '';
 
+  beforeAll(async () => {
+    const { data: user } = await organizer.auth.getUser();
+    const { data: org } = await organizer.from('organizations')
+      .select('id').eq('owner_id', user.user!.id).limit(1).single();
+    const { data } = await organizer.from('ballots').insert({
+      org_id: org!.id, slug: uniqueSlug('doomed'), title: 'Ballot to delete', status: 'draft',
+    }).select('id').single();
+    doomed = data!.id;
+  });
+
+  afterAll(async () => {
+    if (doomed) await organizer.from('ballots').delete().eq('id', doomed);
+  });
+
+  test('asks for the title, and will not go through on the wrong one', async () => {
+    const page = await signedInPage();
+    await page.goto(`${origin}/#/manage/${doomed}`, { waitUntil: 'networkidle0' });
+    await waitForText(page, 'Ballot to delete');
+    await clickByText(page, 'button', 'Settings');
+    await waitForText(page, 'Danger');
+
+    await clickByText(page, 'button', 'Delete ballot');
+    await page.waitForSelector('input[name="confirm_title"]', { timeout: 15000 });
+
+    await page.type('input[name="confirm_title"]', 'Ballot to delet');   // one short
+    const stillThere = await page.$$eval('button',
+      (nodes) => nodes.filter((n) => n.innerText.trim() === 'Delete for good')
+                      .map((n) => (n as HTMLButtonElement).disabled));
+    expect(stillThere).toEqual([true]);
+
+    const { data } = await organizer.from('ballots').select('id').eq('id', doomed).maybeSingle();
+    expect(data).not.toBeNull();
+
+    await page.close();
+  });
+
+  test('goes through on the right one, and lands back on the list', async () => {
+    const page = await signedInPage();
+    await page.goto(`${origin}/#/manage/${doomed}`, { waitUntil: 'networkidle0' });
+    await waitForText(page, 'Ballot to delete');
+    await clickByText(page, 'button', 'Settings');
+    await clickByText(page, 'button', 'Delete ballot');
+    await page.waitForSelector('input[name="confirm_title"]', { timeout: 15000 });
+
+    await page.type('input[name="confirm_title"]', 'Ballot to delete');
+    await clickByText(page, 'button', 'Delete for good');
+
+    await page.waitForFunction(() => window.location.hash === '#/admin', { timeout: 15000 });
+    await waitForText(page, 'Your ballots');
+
+    const { data } = await organizer.from('ballots').select('id').eq('id', doomed).maybeSingle();
+    expect(data).toBeNull();
+    doomed = '';
+
+    await page.close();
+  });
+});
+
+describe('deleting from the dashboard list', () => {
+  // Where a stray ballot is actually noticed. A draft has nothing to lose, so
+  // one confirmation is enough; anything published has votes behind it and
+  // costs the same typed title as the Settings tab.
+  let draft = '';
+  let published = '';
+  let orgId = '';
+
+  const make = async (title: string, status: 'draft' | 'live') => {
+    const { data } = await organizer.from('ballots').insert({
+      org_id: orgId, slug: uniqueSlug('listdel'), title, status,
+    }).select('id').single();
+    return data!.id;
+  };
+
+  beforeAll(async () => {
+    const { data: user } = await organizer.auth.getUser();
+    const { data: org } = await organizer.from('organizations')
+      .select('id').eq('owner_id', user.user!.id).limit(1).single();
+    orgId = org!.id;
+    draft = await make('Stray draft', 'draft');
+    published = await make('Published run', 'live');
+  });
+
+  afterAll(async () => {
+    for (const id of [draft, published]) {
+      if (id) await organizer.from('ballots').delete().eq('id', id);
+    }
+  });
+
+  test('a draft goes in two clicks, without leaving the list', async () => {
+    const page = await signedInPage();
+    await waitForText(page, 'Stray draft');
+
+    await clickWithin(page, '.ballot-row', 'Stray draft', 'button', 'Delete');
+    await clickWithin(page, '.ballot-row', 'Stray draft', 'button', 'Delete for good');
+
+    await page.waitForFunction(
+      () => !document.body.innerText.includes('Stray draft'),
+      { timeout: 15000 },
+    );
+    expect(page.url()).toContain('#/admin');
+
+    const { data } = await organizer.from('ballots').select('id').eq('id', draft).maybeSingle();
+    expect(data).toBeNull();
+    draft = '';
+    await page.close();
+  });
+
+  test('a published ballot asks for its title first', async () => {
+    const page = await signedInPage();
+    await waitForText(page, 'Published run');
+
+    await clickWithin(page, '.ballot-row', 'Published run', 'button', 'Delete');
+    await page.waitForSelector('.ballot-row input[name="confirm_title"]', { timeout: 15000 });
+
+    // Armed but not typed: still refused.
+    const disabled = await page.$$eval('.ballot-row button',
+      (nodes) => nodes.filter((n) => n.innerText.trim() === 'Delete for good')
+                      .map((n) => (n as HTMLButtonElement).disabled));
+    expect(disabled).toEqual([true]);
+
+    await page.type('.ballot-row input[name="confirm_title"]', 'Published run');
+    await clickWithin(page, '.ballot-row', 'Published run', 'button', 'Delete for good');
+
+    await page.waitForFunction(
+      () => !document.body.innerText.includes('Published run'),
+      { timeout: 15000 },
+    );
+    const { data } = await organizer.from('ballots').select('id').eq('id', published).maybeSingle();
+    expect(data).toBeNull();
+    published = '';
+    await page.close();
+  });
+
+  test('cancelling leaves the ballot alone', async () => {
+    const keep = await make('Keep this one', 'live');
+    const page = await signedInPage();
+    await waitForText(page, 'Keep this one');
+
+    await clickWithin(page, '.ballot-row', 'Keep this one', 'button', 'Delete');
+    await page.waitForSelector('.ballot-row input[name="confirm_title"]', { timeout: 15000 });
+    await clickWithin(page, '.ballot-row', 'Keep this one', 'button', 'Cancel');
+
+    await page.waitForFunction(
+      () => !document.querySelector('.ballot-row input[name="confirm_title"]'),
+      { timeout: 15000 },
+    );
+    await waitForText(page, 'Keep this one');
+
+    const { data } = await organizer.from('ballots').select('id').eq('id', keep).maybeSingle();
+    expect(data).not.toBeNull();
+
+    await organizer.from('ballots').delete().eq('id', keep);
     await page.close();
   });
 });

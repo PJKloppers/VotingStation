@@ -16,5 +16,5 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedIndexedAccess": true
   },
-  "include": ["src", "tests", "build.ts", "serve.ts"]
+  "include": ["src", "tests", "icons", "build.ts", "serve.ts"]
 }

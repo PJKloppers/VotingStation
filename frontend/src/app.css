@@ -23,6 +23,13 @@
   --defeated: #96312d;
   --pending:  #8a6d1f;
 
+  /* the QR block does not follow the theme. scanners are trained on dark
+     modules over a light quiet zone, and an inverted code is a coin toss on
+     older phones -- so these two hold the light palette's ink and surface
+     whatever the page around them is doing. */
+  --qr-ink:   #16181d;
+  --qr-paper: #ffffff;
+
   --radius: 10px;
   --radius-lg: 16px;
   --shadow: 0 1px 2px rgb(22 24 29 / 0.06), 0 8px 24px -12px rgb(22 24 29 / 0.18);
@@ -197,9 +204,19 @@ label.field > span.label {
 }
 label.field > span.help { display: block; margin-top: 5px; }
 
-input[type="text"], input[type="email"], input[type="password"],
-input[type="number"], input[type="datetime-local"], select, textarea,
-.pin-entry {
+/* an input is a text field unless its type paints a native control we would
+   only be covering up -- a checkbox's box, a colour swatch, a picker or a
+   button. an allow-list of types stood here before, and react writes no type
+   attribute unless one is asked for, so most of the app's inputs matched
+   nothing and fell back to the browser's own box.
+
+   the exclusions sit in :where() so the whole selector weighs no more than a
+   bare element: a class on the input -- .pin-entry, .grow -- still overrides
+   it without having to be named here. */
+input:not(:where([type="checkbox"], [type="radio"], [type="range"],
+                 [type="color"], [type="file"], [type="submit"],
+                 [type="reset"], [type="button"], [type="image"])),
+select, textarea {
   width: 100%; font-family: inherit; font-size: 1rem;
   padding: 10px 12px; min-height: 44px;
   color: var(--ink); background: var(--surface);
@@ -217,10 +234,8 @@ label.check {
 }
 label.check input { width: 20px; height: 20px; margin: 2px 0 0; accent-color: var(--accent); flex: none; }
 
-/* the PIN box is listed by class above because it carries no type attribute --
-   it is inputmode="numeric", for the phone's keypad -- so it matched none of
-   the type selectors and fell back to the browser's own box, whose default
-   width overflowed a narrow phone.
+/* the PIN box is a plain input -- inputmode="numeric", for the phone's keypad
+   -- taking the field rule above and overriding what follows.
 
    six rules rather than one run of numerals: a voter checks what they typed
    against the slip in their hand position by position. a repeating gradient
@@ -397,9 +412,240 @@ th { font-size: 0.76rem; text-transform: uppercase; letter-spacing: 0.07em; colo
 }
 .tabs button[aria-selected="true"] { color: var(--accent-strong); border-bottom-color: var(--accent); }
 
+/* ----------------------------------------------------------- share block */
+
+.share-set { display: flex; flex-direction: column; gap: 18px; margin-top: 18px; }
+.share { display: flex; gap: 18px; align-items: flex-start; flex-wrap: wrap; }
+.share + .share { border-top: 1px solid var(--rule-soft); padding-top: 18px; }
+/* wide enough to keep a wrapped link readable; below that the code drops under it */
+.share .share-body { flex: 1 1 260px; min-width: 0; }
+.share h4 { font-family: var(--serif); font-size: 1.02rem; font-weight: 600; margin: 0; }
+.share .share-note { color: var(--ink-soft); font-size: 0.9rem; margin: 4px 0 0; }
+
+.share-link { display: flex; gap: 8px; margin-top: 10px; }
+.share-url {
+  flex: 1 1 auto; min-width: 0;
+  font-family: var(--mono); font-size: 0.84rem; line-height: 1.55;
+  padding: 9px 11px;
+  border: 1px solid var(--rule); border-radius: var(--radius);
+  background: var(--surface-2);
+  /* a uuid has no word breaks of its own, so the box is told it may break
+     anywhere rather than run off the side of a phone */
+  overflow-wrap: anywhere;
+}
+.share-url:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.share-url .site  { color: var(--ink-faint); }
+.share-url .route { color: var(--ink); font-weight: 600; }
+.share-url .tail  { color: var(--ink-soft); }
+
+.share-copy { flex: none; align-self: flex-start; }
+button.share-copy[data-state="copied"],
+button.share-copy[data-state="copied"]:hover {
+  color: var(--carried);
+  border-color: color-mix(in srgb, var(--carried) 45%, transparent);
+  background: color-mix(in srgb, var(--carried) 10%, var(--surface));
+}
+.share-fallback { margin: 8px 0 0; font-size: 0.86rem; color: var(--pending); }
+
+.qr { flex: none; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.qr-panel {
+  background: var(--qr-paper); border: 1px solid var(--rule);
+  border-radius: var(--radius); padding: 6px; line-height: 0;
+}
+.qr-panel svg { display: block; width: 152px; height: 152px; }
+.qr-panel path { fill: var(--qr-ink); }
+
+/* projecting it: the code as large as the screen allows, on a ground dark in
+   either theme -- a scrim mixed from --ink would invert with the palette. it
+   is all but opaque because a hall is looking at it, not through it. */
+.qr-stage {
+  position: fixed; inset: 0; z-index: 50;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 14px; padding: 20px;
+  background: color-mix(in srgb, var(--qr-ink) 97%, transparent);
+}
+.qr-stage .qr-panel { padding: 12px; }
+.qr-stage .qr-panel svg { width: min(72vh, 84vw, 560px); height: auto; }
+.qr-stage .qr-stage-url {
+  margin: 0; max-width: min(84vw, 560px); text-align: center;
+  font-family: var(--mono); font-size: 0.82rem; color: var(--qr-paper);
+  overflow-wrap: anywhere;
+}
+.qr-stage button {
+  color: var(--qr-paper); background: none;
+  border-color: color-mix(in srgb, var(--qr-paper) 40%, transparent);
+}
+.qr-stage button:hover { background: color-mix(in srgb, var(--qr-paper) 15%, transparent); }
+
 @media (max-width: 560px) {
   h1 { font-size: 1.6rem; }
   main { padding: 20px 16px 60px; }
   .card { padding: 18px 16px; }
   .pin-entry { font-size: 1.6rem; }
+  /* the code has the row to itself down here, so it may as well use it */
+  .qr { align-self: stretch; }
+  .qr-panel svg { width: min(216px, 100%); height: auto; }
+}
+
+/* ------------------------------------------------------- the dashboard list
+   A ballot row is a row, not one big button: the dashboard is where a stray
+   ballot is noticed, so deleting one has to fit beside opening it. */
+
+.ballot-row {
+  border: 1px solid var(--rule); border-radius: var(--radius);
+  background: var(--surface); padding: 12px 14px; margin-bottom: 10px;
+}
+.ballot-row:hover { border-color: var(--accent); }
+
+.ballot-open {
+  background: none; border: 0; padding: 0; min-height: 44px;
+  font: inherit; color: inherit; text-align: left;
+  display: flex; flex-direction: column; justify-content: center; align-items: flex-start;
+}
+.ballot-open:hover { background: none; }
+
+.ballot-confirm {
+  margin-top: 12px; padding-top: 12px;
+  border-top: 1px solid var(--rule-soft);
+}
+.ballot-confirm > p { margin-bottom: 10px; }
+
+/* -------------------------------------------------------------- the danger
+   Two irreversible things sat side by side as bare text buttons, reading
+   almost the same. Each gets its own row, its own consequence, and a weight
+   that matches what it does. */
+
+.danger-zone {
+  border: 1px solid color-mix(in srgb, var(--defeated) 40%, transparent);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--defeated) 5%, var(--surface));
+  padding: 20px 22px;
+}
+.danger-zone > h3 { color: var(--defeated); margin-bottom: 4px; }
+
+.danger-row {
+  display: flex; gap: 18px; align-items: flex-start; flex-wrap: wrap;
+  padding: 16px 0;
+  border-top: 1px solid color-mix(in srgb, var(--defeated) 22%, transparent);
+}
+.danger-row > .grow { min-width: 220px; }
+.danger-row p { margin: 4px 0 0; }
+
+.danger-confirm { margin-top: 12px; max-width: 340px; }
+
+/* Outlined for the recoverable one, filled for the one that is not. */
+.btn-danger {
+  border-color: color-mix(in srgb, var(--defeated) 55%, transparent);
+  background: var(--surface); color: var(--defeated); white-space: nowrap;
+}
+.btn-danger:hover { background: color-mix(in srgb, var(--defeated) 10%, var(--surface)); }
+.btn-danger.solid {
+  background: var(--defeated); border-color: var(--defeated); color: #fff;
+}
+.btn-danger.solid:hover {
+  background: color-mix(in srgb, var(--defeated) 82%, #000);
+}
+.btn-danger:disabled { opacity: 0.45; }
+
+@media (max-width: 560px) {
+  .danger-zone { padding: 16px; }
+  .danger-row > button { width: 100%; }
+}
+
+/* ------------------------------------------------------ making a new thing
+   Both create forms were a field and two buttons hung off a rule, which read
+   as something left over beside everything they sat next to. Each now says
+   what it is about to make, shows the address it is about to take, and says
+   how much room is left before it is asked for more. */
+
+/* the line a create form collapses to: the button, and the count beside it */
+.create-foot { display: flex; align-items: center; gap: 10px 16px; flex-wrap: wrap; }
+.create-foot > .quota { margin-left: auto; }
+/* ruled only inside a card, where the list above it needs an edge */
+.create-foot.ruled {
+  margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--rule-soft);
+}
+
+.create-panel {
+  margin-top: 16px; padding: 18px;
+  border: 1px solid var(--rule); border-radius: var(--radius);
+  background: var(--surface-2);
+}
+/* the panel took the card's second surface, so its fields take the card's
+   first: two grounds apart either way round, so the box being written in
+   still reads as a box in both themes */
+.create-panel input { background: var(--surface); }
+.create-panel label.field { margin-bottom: 10px; }
+.create-panel > .banner { margin-bottom: 14px; }
+
+.create-head { margin-bottom: 16px; }
+.create-head > h1, .create-head > h2, .create-head > h3 { margin-bottom: 5px; }
+.create-head > .eyebrow { margin-bottom: 3px; }
+.create-head > p:last-child { margin-bottom: 0; }
+.create-note { color: var(--ink-soft); font-size: 0.92rem; }
+
+/* the buttons, then the count pushed to the far side: what it costs sits at
+   the opposite end from what spends it */
+.create-actions {
+  display: flex; align-items: center; gap: 10px 16px; flex-wrap: wrap;
+  margin-top: 18px;
+}
+.create-actions > .quota { margin-left: auto; }
+
+/* -------------------------------------------------- the address being made
+
+   A ballot's slug is derived from its title and never asked for, so this is
+   the only sight of it before it is fixed. The organization's half leads and
+   stays faint: that part was settled already, and the tail is the half the
+   typing is deciding. */
+
+.slug-preview {
+  display: flex; align-items: baseline; gap: 4px 9px; flex-wrap: wrap;
+  margin: 0 0 4px; min-height: 22px; font-size: 0.84rem;
+}
+.slug-preview .slug-label { color: var(--ink-faint); font-weight: 600; }
+.slug-preview .slug-empty { color: var(--ink-faint); }
+.slug-preview .slug-url {
+  font-family: var(--mono); min-width: 0; overflow-wrap: anywhere;
+}
+.slug-preview .slug-url .site { color: var(--ink-faint); }
+.slug-preview .slug-url .leaf { color: var(--accent-strong); font-weight: 600; }
+
+/* ------------------------------------------------------------- the quotas
+   The database holds a ceiling on both organizations and ballots. It used to
+   reach the organizer only as a refusal after the work of filling the form;
+   the rail says the same thing before it is asked for. */
+
+.quota { display: inline-flex; align-items: center; gap: 9px; min-width: 0; }
+.quota-rail {
+  flex: none; width: 42px; height: 5px; border-radius: 99px;
+  background: var(--rule); overflow: hidden;
+}
+.quota-rail > i { display: block; height: 100%; border-radius: 99px; background: var(--accent); }
+.quota-note { font-size: 0.82rem; color: var(--ink-faint); }
+.quota[data-full] .quota-rail > i { background: var(--pending); }
+.quota[data-full] .quota-note { color: var(--pending); }
+
+/* ------------------------------------------------------------ the welcome
+   A first-run organizer has one thing to do, so the form is the page: no
+   dashboard heading over an empty list, and the steps after this one named
+   so that naming an organization reads as the first of three rather than as
+   an obstacle. */
+
+.welcome { padding: 26px 24px; }
+.welcome > .create-head { margin-bottom: 20px; }
+.welcome h1 { font-size: 1.7rem; }
+.welcome-steps {
+  margin: 16px 0 0; padding-left: 20px;
+  color: var(--ink-soft); font-size: 0.94rem;
+}
+.welcome-steps li { margin-bottom: 3px; }
+
+@media (max-width: 560px) {
+  .create-panel { padding: 15px 14px; }
+  .welcome { padding: 20px 16px; }
+  /* nothing is wide enough down here to push the count to a far side. beside
+     the buttons it would read as a third one, so it takes the row under them */
+  .create-foot > .quota { margin-left: 0; }
+  .create-actions > .quota { margin-left: 0; width: 100%; }
 }

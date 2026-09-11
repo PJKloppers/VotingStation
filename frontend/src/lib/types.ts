@@ -27,20 +27,6 @@ export interface PinMatch {
   org_slug: string;
 }
 
-/**
- * One row of the public directory: an organization, with how many published
- * ballots it has. The ballots themselves are not carried -- they are fetched
- * when a reader opens the organization.
- */
-export interface OrgListing {
-  id: string;
-  slug: string;
-  name: string;
-  description: string;
-  contact: string;
-  ballot_count: number;
-}
-
 export interface Ballot {
   id: string;
   org_id: string;
@@ -53,6 +39,8 @@ export interface Ballot {
   closes_at: string | null;
   allow_vote_change: boolean;
   require_all: boolean;
+  /** Gated mode: the chair cannot step past a question until every active PIN has answered it. */
+  require_all_pins: boolean;
   anonymous: boolean;
   show_results_after: boolean;
   results_public: boolean;
@@ -63,6 +51,8 @@ export interface Ballot {
   closed_message: string;
   already_voted_message: string;
   lobby_refresh_seconds: number;
+  /** When the purge takes it. Pushed out by renewing. */
+  expires_at: string;
 }
 
 /** The columns every question table repeats, whatever its type. */
@@ -148,6 +138,12 @@ export interface VoterState {
   voter: { weight: number };
   progress: { voted: number; open_now: number; total: number };
   questions: LobbyQuestion[];
+  /**
+   * What this voter has answered that is now finished -- gate closed, or the
+   * whole ballot closed -- with its count. Empty while a question is still
+   * taking votes, and empty unless the ballot shows voters their results.
+   */
+  settled: QuestionResult[];
 }
 
 export interface Refused {
@@ -223,7 +219,9 @@ export interface BallotResults {
   ok: true;
   updated: string;
   ballot: { id: string; title: string; description: string; status: string; mode: string };
-  turnout: { issued: number; used: number };
+  turnout: { issued: number; used: number; eligible: number };
+  /** Questions not published yet, so a short list does not read as the whole ballot. */
+  withheld: number;
   questions: QuestionResult[];
 }
 

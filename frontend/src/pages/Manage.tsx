@@ -9,7 +9,7 @@ import * as api from '../lib/api';
 import type { AnyQuestion } from '../lib/api';
 import { href, navigate } from '../lib/router';
 import type { Ballot, BallotResults, QuestionResult } from '../lib/types';
-import { Banner, Card, Check, Empty, Field, Pill, Spinner } from '../components/ui';
+import { Banner, Card, Check, Empty, Field, Pill, Rail, Spinner } from '../components/ui';
 import { AdminLinks } from './Admin';
 import { Questions } from './Questions';
 import { Results } from './Results';
@@ -57,6 +57,7 @@ export function Manage({ ballotId }: { ballotId: string }) {
               {ballot.mode === 'gated' ? 'One question at a time' : 'All questions at once'}
               {ballot.anonymous ? ' · anonymous' : ' · named'}
             </span>
+            <Expiry ballot={ballot} onRenewed={load} />
           </div>
         </div>
         <div className="row-end row">
@@ -73,7 +74,7 @@ export function Manage({ ballotId }: { ballotId: string }) {
         ))}
       </div>
 
-      {tab === 'Live' ? <Live ballot={ballot} /> : null}
+      {tab === 'Live' ? <Live ballot={ballot} onFinished={load} /> : null}
       {tab === 'Questions' ? <Questions ballotId={ballot.id} /> : null}
       {tab === 'PINs' ? <Tokens ballotId={ballot.id} /> : null}
       {tab === 'Settings' ? <Settings ballot={ballot} onSaved={load} /> : null}
@@ -83,9 +84,38 @@ export function Manage({ ballotId }: { ballotId: string }) {
   );
 }
 
+/**
+ * The clock a ballot is on.
+ *
+ * Every ballot is deleted thirty days after it is made, so the one thing that
+ * must not be quiet about it is the ballot's own page. Renewing pushes the full
+ * window out again from now.
+ */
+function Expiry({ ballot, onRenewed }: { ballot: Ballot; onRenewed: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const { text, urgent } = untilExpiry(ballot.expires_at);
+
+  const renew = async () => {
+    setBusy(true);
+    try { await api.renewBallot(ballot.id); onRenewed(); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <span className="row" style={{ gap: 8 }}>
+      <span className="faint" style={urgent ? { color: 'var(--defeated)' } : undefined}>
+        · {text}
+      </span>
+      <button className="ghost small" disabled={busy} onClick={() => void renew()}>
+        {busy ? 'Renewing…' : 'Renew'}
+      </button>
+    </span>
+  );
+}
+
 /* ------------------------------------------------------------ the meeting */
 
-function Live({ ballot }: { ballot: Ballot }) {
+function Live({ ballot, onFinished }: { ballot: Ballot; onFinished: () => void }) {
   const [questions, setQuestions] = useState<AnyQuestion[] | null>(null);
   const [results, setResults] = useState<BallotResults | null>(null);
   const [busy, setBusy] = useState(false);
@@ -120,8 +150,22 @@ function Live({ ballot }: { ballot: Ballot }) {
     finally { setBusy(false); }
   };
 
-  if (questions === null) return <Spinner label="Loading the floor" />;
+  if (questions === null) return <Spinner label="Reading the ballot" />;
   const enabled = questions.filter((q) => q.enabled);
+
+  const step = async () => {
+    setBusy(true);
+    try {
+      const answer = await api.advanceBallot(ballot.id);
+      if (!answer.ok) setError(answer.error ?? 'That did not work.');
+      await load();
+      if (answer.action === 'finished') onFinished();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'That did not work.');
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <div className="stack">
@@ -137,6 +181,21 @@ function Live({ ballot }: { ballot: Ballot }) {
             gates below do not apply.
           </Banner>
         : null}
+
+      {ballot.mode === 'gated' && ballot.status === 'live' ? (
+        <Card>
+          <div className="row">
+            <div className="grow">
+              <p className="eyebrow">The floor</p>
+              <strong>{stepLabel(enabled, results)}</strong>
+            </div>
+            <button className="primary" disabled={busy || enabled.length === 0}
+                    onClick={() => void step()}>
+              {busy ? 'Working…' : stepButton(enabled)}
+            </button>
+          </div>
+        </Card>
+      ) : null}
 
       <div className="row">
         <span className="faint grow">
@@ -162,6 +221,12 @@ function Live({ ballot }: { ballot: Ballot }) {
               </div>
               {q.gate_open ? <Pill tone="open">Open</Pill> : <Pill tone="closed">Closed</Pill>}
             </div>
+
+            <Turnout
+              voted={tally ? votersOn(tally) : 0}
+              eligible={results?.turnout.eligible ?? 0}
+              required={ballot.require_all_pins}
+            />
             <div className="row" style={{ marginTop: 14 }}>
               {q.gate_open ? (
                 <button className="ghost" disabled={busy}
@@ -191,6 +256,66 @@ function Live({ ballot }: { ballot: Ballot }) {
   );
 }
 
+/**
+ * How much of the room has answered one question.
+ *
+ * The chair's question is always "can I move on yet", so the card answers it
+ * before they have to ask. When the ballot waits for everyone, the same bar is
+ * also the thing standing between them and the next question, so it says so.
+ */
+function Turnout({ voted, eligible, required }: {
+  voted: number; eligible: number; required: boolean;
+}) {
+  if (eligible === 0) return null;
+  const all = voted >= eligible;
+
+  return (
+    <div style={{ marginTop: 10 }}>
+      <div className="row" style={{ gap: 8, marginBottom: 2 }}>
+        <span className="faint grow">{voted} of {eligible} PINs voted</span>
+        {required
+          ? all
+            ? <Pill tone="carried">All in</Pill>
+            : <Pill tone="pending">Waiting for {eligible - voted}</Pill>
+          : null}
+      </div>
+      <Rail value={voted / eligible} />
+    </div>
+  );
+}
+
+/**
+ * What the step button is about to do, in full. A chair pressing this in front
+ * of a room should not have to guess which question it moves to.
+ */
+function nextInLine(enabled: AnyQuestion[]): { open: AnyQuestion | null; next: AnyQuestion | null } {
+  const open = enabled.find((q) => q.gate_open) ?? null;
+  if (!open) return { open: null, next: enabled[0] ?? null };
+  const at = enabled.indexOf(open);
+  return { open, next: enabled[at + 1] ?? null };
+}
+
+function stepLabel(enabled: AnyQuestion[], results: BallotResults | null): string {
+  const { open, next } = nextInLine(enabled);
+  if (enabled.length === 0) return 'No questions on the ballot yet.';
+  if (!open) return `Nothing is open. Next up: "${next?.prompt ?? '—'}".`;
+  const voted = results?.questions.find((r) => r.id === open.id);
+  const count = voted ? ` · ${votersOn(voted)} voted so far` : '';
+  return next
+    ? `Open: "${open.prompt}"${count}. Next: "${next.prompt}".`
+    : `Open: "${open.prompt}"${count}. This is the last question.`;
+}
+
+function stepButton(enabled: AnyQuestion[]): string {
+  const { open, next } = nextInLine(enabled);
+  if (!open) return 'Open the first question';
+  return next ? 'Close and open the next' : 'Close and end the ballot';
+}
+
+function votersOn(result: QuestionResult): number {
+  return result.type === 'yes_no' ? result.tally.voters : result.tally.voters;
+}
+
 /** The one line of the tally that a chairperson actually watches. */
 function leadLine(result: QuestionResult | undefined): string {
   if (!result) return 'No count yet';
@@ -210,6 +335,11 @@ function leadLine(result: QuestionResult | undefined): string {
 function Settings({ ballot, onSaved }: { ballot: Ballot; onSaved: () => void }) {
   const [draft, setDraft] = useState<Partial<Ballot>>({});
   const [saving, setSaving] = useState(false);
+  const [voiding, setVoiding] = useState(false);
+  // Typing the title out is the confirmation. An irreversible thing should cost
+  // more than the reflex that dismisses a dialog.
+  const [confirming, setConfirming] = useState(false);
+  const [typed, setTyped] = useState('');
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
 
@@ -234,9 +364,26 @@ function Settings({ ballot, onSaved }: { ballot: Ballot; onSaved: () => void }) 
   };
 
   const remove = async () => {
-    if (!confirm(`Delete "${ballot.title}", its questions and every vote on it?`)) return;
-    await api.deleteBallot(ballot.id);
-    navigate('/admin');
+    setError('');
+    try {
+      await api.deleteBallot(ballot.id);
+      navigate('/admin');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not delete the ballot.');
+    }
+  };
+
+  const voidVotes = async () => {
+    if (!confirm(`Void every vote on "${ballot.title}"? The questions and PINs stay.`)) return;
+    setVoiding(true); setError('');
+    try {
+      await api.clearBallotVotes(ballot.id);
+      setSaved(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not void the votes.');
+    } finally {
+      setVoiding(false);
+    }
   };
 
   const dirty = Object.keys(draft).length > 0;
@@ -294,6 +441,9 @@ function Settings({ ballot, onSaved }: { ballot: Ballot; onSaved: () => void }) 
                help="Store a salted hash instead of the PIN. Cannot be changed once a vote has been cast." />
         <Check label="All questions required (open mode)" checked={v('require_all')}
                onChange={(x) => set('require_all', x)} />
+        <Check label="All PINs must vote" checked={v('require_all_pins')}
+               onChange={(x) => set('require_all_pins', x)}
+               help="Gated mode: the step button will not close a question until every active PIN has answered it. A disabled PIN is not waited for." />
         <Check label="Show the result after voting" checked={v('show_results_after')}
                onChange={(x) => set('show_results_after', x)} />
         <Check label="Publish the results once voting closes" checked={v('results_public')}
@@ -331,18 +481,84 @@ function Settings({ ballot, onSaved }: { ballot: Ballot; onSaved: () => void }) 
         </button>
       </div>
 
-      <Card>
+      {/* Two irreversible things, and one of them is much worse than the other.
+          Each says what it takes and what it leaves, because "Void every vote"
+          and "Delete this ballot" read almost the same on a button. */}
+      <section className="danger-zone">
         <h3>Danger</h3>
-        <div className="row">
-          <button className="danger"
-                  onClick={() => { if (confirm('Void every vote on this ballot?')) void api.clearBallotVotes(ballot.id); }}>
-            Void every vote
+
+        <div className="danger-row">
+          <div className="grow">
+            <strong>Void every vote</strong>
+            <p className="faint">
+              Marks every ballot cast as superseded and returns each PIN to unused.
+              The questions, the options and the PINs themselves stay, and the rows
+              are not deleted &mdash; the log still reads. Use it to rerun a vote.
+            </p>
+          </div>
+          <button className="btn-danger" disabled={voiding} onClick={() => void voidVotes()}>
+            {voiding ? 'Voiding\u2026' : 'Void votes'}
           </button>
-          <button className="danger" onClick={() => void remove()}>Delete this ballot</button>
         </div>
-      </Card>
+
+        <div className="danger-row">
+          <div className="grow">
+            <strong>Delete this ballot</strong>
+            <p className="faint">
+              Removes &ldquo;{ballot.title}&rdquo; along with its questions, its options,
+              its PINs and every vote ever cast on it. There is no undo.
+            </p>
+
+            {confirming ? (
+              <div className="danger-confirm">
+                <label className="field" style={{ margin: 0 }}>
+                  <span className="label">Type the title to confirm</span>
+                  <input
+                    name="confirm_title"
+                    autoFocus
+                    autoComplete="off"
+                    placeholder={ballot.title}
+                    value={typed}
+                    onChange={(e) => setTyped(e.target.value)}
+                  />
+                </label>
+              </div>
+            ) : null}
+          </div>
+
+          {confirming ? (
+            <div className="row" style={{ alignItems: 'flex-start' }}>
+              <button className="ghost"
+                      onClick={() => { setConfirming(false); setTyped(''); }}>
+                Cancel
+              </button>
+              <button className="btn-danger solid"
+                      disabled={typed.trim() !== ballot.title.trim()}
+                      onClick={() => void remove()}>
+                Delete for good
+              </button>
+            </div>
+          ) : (
+            <button className="btn-danger solid" onClick={() => setConfirming(true)}>
+              Delete ballot
+            </button>
+          )}
+        </div>
+      </section>
     </div>
   );
+}
+
+/** How long a ballot has left, in the words a person would use. */
+export function untilExpiry(iso: string): { text: string; urgent: boolean } {
+  const ms = new Date(iso).getTime() - Date.now();
+  if (ms <= 0) return { text: 'expired', urgent: true };
+  const days = Math.floor(ms / 86_400_000);
+  if (days >= 2) return { text: `purges in ${days} days`, urgent: days <= 3 };
+  const hours = Math.floor(ms / 3_600_000);
+  if (hours >= 2) return { text: `purges in ${hours} hours`, urgent: true };
+  const minutes = Math.max(1, Math.floor(ms / 60_000));
+  return { text: `purges in ${minutes} min`, urgent: true };
 }
 
 function toLocal(iso: string | null): string {
