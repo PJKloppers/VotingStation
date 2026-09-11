@@ -176,9 +176,16 @@ function PrintSheet({ ballotId, title, tokens }: {
   const code = encodeQr(url);
   const live = tokens.filter((t) => t.status === 'active');
 
+  // Eight to a sheet, decided here rather than left to whatever the paper and
+  // the print dialog's scale setting happen to allow.
+  const sheets: TokenRow[][] = [];
+  for (let i = 0; i < live.length; i += 8) sheets.push(live.slice(i, i + 8));
+
   return (
     <div className="print-sheet" aria-hidden="true">
-      {live.map((t) => (
+      {sheets.map((sheet, i) => (
+        <div key={i} className={`print-page${i === sheets.length - 1 ? ' last' : ''}`}>
+      {sheet.map((t) => (
         <div key={t.id} className="slip">
           <div className="slip-title">{title}</div>
           <div className="slip-pin">{t.pin}</div>
@@ -194,6 +201,8 @@ function PrintSheet({ ballotId, title, tokens }: {
             </svg>
           ) : null}
           <div className="slip-url">{url.replace(/^https?:\/\//, '')}</div>
+        </div>
+      ))}
         </div>
       ))}
     </div>

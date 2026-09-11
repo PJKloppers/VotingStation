@@ -250,9 +250,11 @@ test('the print sheet makes one slip per active PIN', async () => {
     await page.close();
   });
 
-test('eight slips to a page, on A4 and on Letter', async () => {
-    // The row height is what fixes this, and it is sized for the shorter of the
-    // two papers. Counting pages in a real PDF is the only way to know it holds.
+test('eight slips to a page, whatever the paper and the scale', async () => {
+    // The first version of this fixed the row height in millimetres and only
+    // measured A4 and Letter at a zero margin, which is not what a print dialog
+    // does. At 110% scale -- one click in Chrome's print preview -- the fourth
+    // row stopped fitting and every page quietly dropped to six.
     if (process.env.HEADED === '1') return;   // page.pdf needs headless
 
     const { data: user } = await organizer.auth.getUser();
@@ -263,8 +265,8 @@ test('eight slips to a page, on A4 and on Letter', async () => {
     }).select('id').single();
     const paper = b!.id;
 
-    const minted = await organizer.rpc('issue_tokens', { p_ballot: paper, p_count: 9 });
-    const ninth = (minted.data as Array<{ pin: string }>)[8]!.pin;
+    const minted = await organizer.rpc('issue_tokens', { p_ballot: paper, p_count: 24 });
+    const last = (minted.data as Array<{ pin: string }>)[23]!.pin;
 
     const page = await signedInPage();
     await page.goto(`${origin}/#/manage/${paper}`, { waitUntil: 'networkidle0' });
@@ -274,31 +276,40 @@ test('eight slips to a page, on A4 and on Letter', async () => {
     await clickByText(page, 'button', 'Print slips');
     await page.waitForSelector('.print-sheet .slip', { timeout: 15000 });
 
-    const pagesOf = async (format: 'A4' | 'Letter') => {
-      const pdf = await page.pdf({
-        format, printBackground: true,
-        margin: { top: 0, right: 0, bottom: 0, left: 0 },
-      });
+    const margin = (v: string) => ({ top: v, right: v, bottom: v, left: v });
+    const pagesOf = async (opts: Record<string, unknown>) => {
+      const pdf = await page.pdf({ printBackground: true, ...opts });
       return (Buffer.from(pdf).toString('latin1').match(/\/Type\s*\/Page[^s]/g) ?? []).length;
     };
 
-    // Nine will not fit on one sheet.
-    expect(await pagesOf('A4')).toBe(2);
-    expect(await pagesOf('Letter')).toBe(2);
+    const settings: Array<[string, Record<string, unknown>]> = [
+      ['A4',                     { format: 'A4', margin: margin('0.4in') }],
+      ['A4 wide margins',        { format: 'A4', margin: margin('1in') }],
+      ['A4 headers and footers', { format: 'A4', margin: margin('1in'), displayHeaderFooter: true }],
+      ['A4 at 125%',             { format: 'A4', margin: margin('0.4in'), scale: 1.25 }],
+      ['A4 at 150%',             { format: 'A4', margin: margin('0.4in'), scale: 1.5 }],
+      ['A4 landscape',           { format: 'A4', landscape: true, margin: margin('0.4in') }],
+      ['Letter',                 { format: 'Letter', margin: margin('1in') }],
+      ['Legal',                  { format: 'Legal', margin: margin('1in') }],
+      ['A5',                     { format: 'A5', margin: margin('0.4in') }],
+    ];
 
-    // Take one out of circulation; the sheet prints only the active ones.
+    // 24 slips is three sheets of eight, on every one of them.
+    for (const [name, opts] of settings) {
+      expect(`${name}: ${await pagesOf(opts)}`).toBe(`${name}: 3`);
+    }
+
+    // Take one out of circulation: the sheet prints only the active ones.
     await organizer.from('ballot_tokens')
-      .update({ status: 'disabled' }).eq('ballot_id', paper).eq('pin', ninth);
+      .update({ status: 'disabled' }).eq('ballot_id', paper).eq('pin', last);
     await page.reload({ waitUntil: 'networkidle0' });
     await clickByText(page, 'button', 'PINs');
     await page.waitForSelector('table tbody tr', { timeout: 15000 });
     await page.evaluate(() => { window.print = () => {}; });
     await clickByText(page, 'button', 'Print slips');
     await page.waitForFunction(
-      () => document.querySelectorAll('.slip').length === 8, { timeout: 15000 });
-
-    expect(await pagesOf('A4')).toBe(1);
-    expect(await pagesOf('Letter')).toBe(1);
+      () => document.querySelectorAll('.slip').length === 23, { timeout: 15000 });
+    expect(await pagesOf({ format: 'A4', margin: margin('0.4in') })).toBe(3);
 
     await page.close();
     await organizer.from('ballots').delete().eq('id', paper);

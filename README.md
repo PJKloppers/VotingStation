@@ -174,10 +174,11 @@ rather than whenever the purge next runs.
 **PINs print as slips.** The PINs tab renders one cut-out per active PIN —
 ballot title, the code, and a QR of the voting link — revealed by `@media print`
 rather than by opening a second document, so there is nothing to keep in step
-and no popup for a browser to block. Eight to a page, two across and four down;
-the row height is sized for the shorter of the two papers it will meet, since
-Letter has 259mm of printable height where A4 has 277mm and four rows have to
-fit inside the smaller one. A test counts the pages of a real PDF on both.
+and no popup for a browser to block. Eight to a page, two across and four down.
+Each group of eight is its own page box, `100vh` tall with four rows of
+`minmax(0, 1fr)` — so a row is a quarter of the page by construction, whatever
+the paper and whatever the print dialog's scale. A test counts the pages of real
+PDFs across nine combinations of paper, margin and scale.
 
 `public.app_limits()` exposes the two quotas so a form can say "4 of 5
 organizations" without a constant in the client drifting from the database that

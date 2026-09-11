@@ -676,21 +676,37 @@ button.share-copy[data-state="copied"]:hover {
   body { background: #fff; color: #000; }
   main { max-width: none; padding: 0; }
 
-  .print-sheet {
+  .print-sheet { display: block; }
+
+  /*
+   * One page box per eight slips.
+   *
+   * This used to be one long grid with rows fixed in millimetres, and four of
+   * them fitted a sheet -- until the print dialog's scale was anything above
+   * 100%, when the fourth row no longer fitted and every page dropped to six.
+   *
+   * `100vh` in paged media is the page box, whatever the paper and whatever the
+   * scale, so four equal rows are a quarter of the page by construction rather
+   * than by arithmetic that only held for one set of settings.
+   */
+  .print-page {
+    height: 100vh;
     display: grid;
-    /* Two across, four down. The row height is what fixes eight to a page, and
-       it is sized for the shorter of the two papers this will meet: Letter has
-       259mm of printable height at a 10mm margin where A4 has 277mm, so four
-       rows have to fit inside the smaller one or Letter silently drops to six. */
     grid-template-columns: repeat(2, 1fr);
-    grid-auto-rows: 63mm;
-    gap: 0;
+    /* minmax(0, 1fr), not 1fr: a bare `1fr` will not shrink below its content,
+       so on a short page (A5, landscape, a scale above 125%) the rows grew and
+       pushed the fourth pair onto the next sheet. With this the row is always a
+       quarter of the page and the slip clips instead. */
+    grid-template-rows: repeat(4, minmax(0, 1fr));
+    break-after: page;
+    page-break-after: always;
   }
+  .print-page.last { break-after: auto; page-break-after: auto; }
 
   .slip {
     /* A cut line, and enough room that scissors are forgiving. */
     border: 1px dashed #999;
-    padding: 5mm 6mm;
+    padding: 4mm 6mm;
     text-align: center;
     display: flex;
     flex-direction: column;
@@ -706,11 +722,11 @@ button.share-copy[data-state="copied"]:hover {
     margin-bottom: 2mm;
   }
   .slip-pin {
-    font-family: var(--mono); font-size: 19pt; font-weight: 700;
+    font-family: var(--mono); font-size: 17pt; font-weight: 700;
     letter-spacing: 0.24em; text-indent: 0.24em;
     margin-bottom: 2.5mm;
   }
-  .slip-qr { width: 20mm; height: 20mm; display: block; margin: 0 auto 1.5mm; }
+  .slip-qr { width: 17mm; height: 17mm; display: block; margin: 0 auto 1.5mm; }
   .slip-url { font-size: 6.5pt; color: #333; word-break: break-all; line-height: 1.25; }
 
   @page { margin: 10mm; }
