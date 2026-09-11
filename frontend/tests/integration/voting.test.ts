@@ -8,7 +8,7 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { anonClient, organizerClient, uniqueSlug } from '../helpers/env';
+import { anonClient, organizerClient, otherOrganizerClient, uniqueSlug } from '../helpers/env';
 
 let organizer: SupabaseClient;
 let voter: SupabaseClient;
@@ -421,6 +421,86 @@ describe('creating a ballot', () => {
     expect(mine?.id).toBe(data!.id);
 
     await organizer.from('ballots').delete().eq('id', data!.id);
+  });
+});
+
+describe('one account cannot see another\'s', () => {
+  // The dashboard lists whatever row level security hands it, so the policy is
+  // the whole boundary. These read the tables directly rather than through a
+  // client-side filter, which would hide a policy that had loosened again.
+  let other: SupabaseClient;
+  let otherId = '';
+  let otherOrg = '';
+  let otherBallot = '';
+
+  beforeAll(async () => {
+    other = await otherOrganizerClient();
+    const { data: u } = await other.auth.getUser();
+    otherId = u.user!.id;
+
+    const { data: existing } = await other.from('organizations')
+      .select('id').eq('owner_id', otherId).limit(1).maybeSingle();
+
+    otherOrg = existing?.id ?? (await other.from('organizations')
+      .insert({ owner_id: otherId, slug: uniqueSlug('other-org'), name: 'Someone Else' })
+      .select('id').single()).data!.id;
+
+    const { data: b } = await other.from('ballots').insert({
+      org_id: otherOrg, slug: uniqueSlug('theirs'), title: 'Their private ballot',
+    }).select('id').single();
+    otherBallot = b!.id;
+  });
+
+  afterAll(async () => {
+    if (otherBallot) await other.from('ballots').delete().eq('id', otherBallot);
+    await other.auth.signOut();
+  });
+
+  test('their organizations are invisible', async () => {
+    const { data } = await organizer.from('organizations').select('id, owner_id');
+    const theirs = (data ?? []).filter((o) => o.owner_id !== null && o.owner_id !== undefined
+      && o.id === otherOrg);
+    expect(theirs).toHaveLength(0);
+  });
+
+  test('and the list a dashboard gets holds only your own', async () => {
+    const { data: mine } = await organizer.auth.getUser();
+    const { data } = await organizer.from('organizations').select('id, owner_id');
+    expect(data!.length).toBeGreaterThan(0);
+    for (const o of data!) expect(o.owner_id).toBe(mine.user!.id);
+  });
+
+  test('it holds in the other direction too', async () => {
+    const { data } = await other.from('organizations').select('id, owner_id');
+    for (const o of data!) expect(o.owner_id).toBe(otherId);
+  });
+
+  test('an anonymous reader sees no organizations at all', async () => {
+    const { data } = await voter.from('organizations').select('id');
+    expect(data ?? []).toHaveLength(0);
+  });
+
+  test('their draft ballot is invisible', async () => {
+    const { data } = await organizer.from('ballots').select('id').eq('id', otherBallot).maybeSingle();
+    expect(data).toBeNull();
+  });
+
+  test('renaming their organization changes nothing', async () => {
+    // It never could -- the write policies were always owner-scoped. PostgREST
+    // reports no error when row level security simply matches nothing, so the
+    // check has to be whether the row moved, not whether the call complained.
+    await organizer.from('organizations').update({ name: 'Taken over' }).eq('id', otherOrg);
+
+    const { data } = await other.from('organizations').select('name').eq('id', otherOrg).single();
+    expect(data!.name).not.toBe('Taken over');
+  });
+
+  test('nor can they mint PINs on it, or step its ballot', async () => {
+    const minted = await organizer.rpc('issue_tokens', { p_ballot: otherBallot, p_count: 1 });
+    expect(minted.error).not.toBeNull();
+
+    const stepped = await organizer.rpc('advance_ballot', { p_ballot: otherBallot });
+    expect(stepped.error).not.toBeNull();
   });
 });
 

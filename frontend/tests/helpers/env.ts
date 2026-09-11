@@ -37,6 +37,22 @@ export function anonClient(): SupabaseClient {
   });
 }
 
+/**
+ * A second organizer, for proving one account cannot see another's work.
+ * Same password, a `+isolation` address -- so the suite needs one secret, not
+ * two, and the account is obviously a test account wherever it shows up.
+ */
+export async function otherOrganizerClient(): Promise<SupabaseClient> {
+  const client = anonClient();
+  const { email, password } = credentials();
+  const [name = '', domain = ''] = email.split('@');
+  const { error } = await client.auth.signInWithPassword({
+    email: `${name}+isolation@${domain}`, password,
+  });
+  if (error) throw new Error(`Could not sign in as the second organizer: ${error.message}`);
+  return client;
+}
+
 /** A client signed in as the organizer. */
 export async function organizerClient(): Promise<SupabaseClient> {
   const client = anonClient();

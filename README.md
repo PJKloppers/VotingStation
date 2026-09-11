@@ -108,7 +108,10 @@ says how many are outstanding; the Live tab shows the same count per question.
 
 ## What is public and what is not
 
-- **Public** — organizations, published ballots, their questions and options,
+- **Private to their owner** — organizations. Nothing public reads that table:
+  a voter gets the organization's name from `find_ballots_for_pin`, which is
+  security definer and does not go through the policy.
+- **Public** — published ballots, their questions and options,
   and the votes on any question that has **finished**, if the ballot publishes
   results at all.
 - **The organizer's alone until then** — the count on a question still taking

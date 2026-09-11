@@ -133,9 +133,20 @@ export async function limits(): Promise<Limits | null> {
   return error ? null : (data as Limits);
 }
 
+/**
+ * The signed-in user's organizations.
+ *
+ * The owner filter is belt and braces: row level security already answers only
+ * with their own, and there is a test on the policy itself rather than on this
+ * query. But a page that lists "whatever the database hands back" is one
+ * loosened policy away from listing somebody else's work, and that is exactly
+ * how this leaked once.
+ */
 export async function myOrganizations(): Promise<Organization[]> {
+  const { data: user } = await supabase.auth.getUser();
+  if (!user.user) return [];
   const { data, error } = await supabase
-    .from('organizations').select('*').order('name');
+    .from('organizations').select('*').eq('owner_id', user.user.id).order('name');
   return unwrap(data, error);
 }
 
