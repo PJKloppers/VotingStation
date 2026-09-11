@@ -1,4 +1,5 @@
 /** The small pieces every page shares. */
+import { useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 
 export function Banner({ kind = 'info', children }: {
@@ -53,6 +54,42 @@ export function Spinner({ label = 'Loading' }: { label?: string }) {
 
 export function Empty({ children }: { children: ReactNode }) {
   return <div className="empty">{children}</div>;
+}
+
+/**
+ * A modal.
+ *
+ * Native `<dialog>`, so the focus trap, the Esc key and the inert background
+ * are the browser's job rather than ours. Clicking the backdrop closes it --
+ * the backdrop is part of the element, so the click lands on the dialog itself.
+ */
+export function Modal({ open, title, onClose, children }: {
+  open: boolean; title: string; onClose: () => void; children: ReactNode;
+}) {
+  const ref = useRef<HTMLDialogElement>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (open && !el.open) el.showModal();
+    if (!open && el.open) el.close();
+  }, [open]);
+
+  return (
+    <dialog
+      ref={ref}
+      className="modal"
+      aria-label={title}
+      onClose={onClose}
+      onClick={(e) => { if (e.target === ref.current) onClose(); }}
+    >
+      <div className="modal-head">
+        <h2 className="grow">{title}</h2>
+        <button className="ghost small" onClick={onClose}>Close</button>
+      </div>
+      <div className="modal-body">{children}</div>
+    </dialog>
+  );
 }
 
 /** A progress rail, 0..1. */

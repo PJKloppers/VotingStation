@@ -3,10 +3,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import * as api from '../lib/api';
 import { href, navigate } from '../lib/router';
-import type { Ballot, Organization } from '../lib/types';
+import type { Ballot, Organization, OrganizationImage } from '../lib/types';
 import { encodeQr, QUIET, qrPath, type QrCode } from '../lib/qr';
 import { slugify } from '../lib/slug';
-import { Banner, Card, Empty, Field, Pill, Spinner } from '../components/ui';
+import { Banner, Card, Empty, Field, Modal, Pill, Spinner } from '../components/ui';
 
 export function Admin() {
   const [orgs, setOrgs] = useState<Organization[] | null>(null);
@@ -16,10 +16,15 @@ export function Admin() {
   const [orgCap, setOrgCap] = useState<number | null>(null);
   const [ballotCap, setBallotCap] = useState<number | null>(null);
   const [error, setError] = useState('');
+  const [settingsFor, setSettingsFor] = useState<string | null>(null);
+  const [logos, setLogos] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
     try {
-      const [mine, caps] = await Promise.all([api.myOrganizations(), api.limits()]);
+      const [mine, caps, marks] = await Promise.all([
+        api.myOrganizations(), api.limits(), api.myOrgLogos(),
+      ]);
+      setLogos(marks);
       setOrgs(mine);
       if (caps) {
         setOrgCap(caps.organizations_per_user);
@@ -68,12 +73,23 @@ export function Admin() {
         {orgs.map((org) => (
           <Card key={org.id}>
             <div className="row">
+              <OrgMarkThumb path={logos[org.id]} />
               <div className="grow">
                 <p className="eyebrow">Organization</p>
                 <h2>{org.name}</h2>
                 <p className="faint mono">/{org.slug}</p>
               </div>
+              <button className="ghost small" onClick={() => setSettingsFor(org.id)}>
+                Settings
+              </button>
             </div>
+
+            <OrgSettings
+              org={org}
+              open={settingsFor === org.id}
+              onClose={() => setSettingsFor(null)}
+              onSaved={load}
+            />
 
             <div style={{ marginTop: 16 }}>
               {(ballots[org.id] ?? []).length === 0
@@ -143,6 +159,154 @@ function Quota({ used, cap, noun }: { used: number; cap: number | null; noun: st
  * it and goes on a second click; anything published has votes behind it and
  * costs the same typed title as the Settings tab.
  */
+/**
+ * Everything about an organization that is not its ballots.
+ *
+ * Two settings for now, and a modal rather than a page: both are things you
+ * change once and then leave, and neither is worth losing your place on the
+ * dashboard for.
+ */
+function OrgSettings({ org, open, onClose, onSaved }: {
+  org: Organization; open: boolean; onClose: () => void; onSaved: () => void;
+}) {
+  const [name, setName] = useState(org.name);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [saved, setSaved] = useState(false);
+
+  // Reopening should show what is stored, not what was half-typed last time.
+  useEffect(() => { if (open) { setName(org.name); setError(''); setSaved(false); } },
+           [open, org.name]);
+
+  const rename = async () => {
+    setSaving(true); setError('');
+    try {
+      await api.updateOrganization(org.id, { name: name.trim() });
+      setSaved(true);
+      onSaved();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not save that.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const dirty = name.trim() !== org.name && name.trim().length > 0;
+
+  return (
+    <Modal open={open} title={`${org.name} settings`} onClose={onClose}>
+      {error ? <Banner kind="error">{error}</Banner> : null}
+      {saved && !dirty ? <Banner kind="good">Saved.</Banner> : null}
+
+      <Field label="Name">
+        <input name="org_rename" value={name}
+               onChange={(e) => { setName(e.target.value); setSaved(false); }} />
+      </Field>
+      <p className="faint" style={{ marginTop: -8 }}>
+        The link stays <span className="mono">/{org.slug}</span>; renaming does not
+        move anyone's ballots.
+      </p>
+      <div className="row">
+        <button className="primary" disabled={!dirty || saving} onClick={() => void rename()}>
+          {saving ? 'Saving…' : 'Save name'}
+        </button>
+      </div>
+
+      <div style={{ marginTop: 22, paddingTop: 18, borderTop: '1px solid var(--rule-soft)' }}>
+        <h3 style={{ marginBottom: 4 }}>Mark</h3>
+        <OrgLogo orgId={org.id} onChanged={onSaved} />
+      </div>
+    </Modal>
+  );
+}
+
+/**
+ * The mark beside an organization's name.
+ *
+ * Told, not fetched: it used to load its own and so never noticed one being
+ * uploaded in the modal above it -- the card stayed blank until a reload. The
+ * dashboard loads every mark in one query, so one refresh moves all of them.
+ */
+function OrgMarkThumb({ path }: { path: string | undefined }) {
+  const src = api.logoUrl(path);
+  if (!src) return null;
+  return <span className="org-thumb"><img src={src} alt="" /></span>;
+}
+
+/**
+ * An organization's mark.
+ *
+ * It ends up in three places a voter sees -- the ballot header, the printed
+ * slips, and the middle of the QR on each slip.
+ */
+function OrgLogo({ orgId, onChanged }: { orgId: string; onChanged?: () => void }) {
+  const [image, setImage] = useState<OrganizationImage | null | undefined>(undefined);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const input = useRef<HTMLInputElement>(null);
+
+  const load = useCallback(() => {
+    api.orgLogo(orgId).then(setImage).catch(() => setImage(null));
+  }, [orgId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const choose = async (file: File | undefined) => {
+    if (!file) return;
+    setBusy(true); setError('');
+    try {
+      setImage(await api.uploadOrgLogo(orgId, file));
+      onChanged?.();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not upload that.');
+    } finally {
+      setBusy(false);
+      if (input.current) input.current.value = '';
+    }
+  };
+
+  const drop = async () => {
+    if (!confirm('Remove this organization\u2019s mark?')) return;
+    setBusy(true); setError('');
+    try { await api.removeOrgLogo(orgId); setImage(null); onChanged?.(); }
+    catch (e) { setError(e instanceof Error ? e.message : 'Could not remove it.'); }
+    finally { setBusy(false); }
+  };
+
+  if (image === undefined) return null;
+  const src = api.logoUrl(image?.path);
+
+  return (
+    <div className="org-mark">
+      <div className="org-mark-frame">
+        {src
+          ? <img src={src} alt="" />
+          : <span className="faint" aria-hidden="true">—</span>}
+      </div>
+      <div className="grow">
+        <p className="faint" style={{ margin: 0 }}>
+          {src
+            ? 'Shown on the ballot, on printed slips, and inside their QR codes.'
+            : 'No mark yet. It would show on the ballot, on printed slips, and inside their QR codes.'}
+        </p>
+        {error ? <Banner kind="error">{error}</Banner> : null}
+        <div className="row" style={{ marginTop: 8 }}>
+          <input ref={input} type="file" name="org_logo" hidden
+                 accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                 onChange={(e) => void choose(e.target.files?.[0])} />
+          <button className="ghost small" disabled={busy}
+                  onClick={() => input.current?.click()}>
+            {busy ? 'Working…' : src ? 'Replace mark' : 'Add a mark'}
+          </button>
+          {src
+            ? <button className="danger small" disabled={busy} onClick={() => void drop()}>Remove</button>
+            : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function BallotRow({ ballot, onDeleted }: { ballot: Ballot; onDeleted: () => void }) {
   const [arming, setArming] = useState(false);
   const [typed, setTyped] = useState('');

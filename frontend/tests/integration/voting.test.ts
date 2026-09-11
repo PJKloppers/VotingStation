@@ -504,6 +504,111 @@ describe('one account cannot see another\'s', () => {
   });
 });
 
+describe('an organization\'s mark', () => {
+  // The bucket is public to read, so the boundary that matters is who can write
+  // into whose folder, and who can read the table that says which object is
+  // whose. The table is owner-only; a voter gets the path from the functions
+  // they already call.
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64',
+  );
+  let mine = '';
+  let theirs: SupabaseClient;
+  let theirOrg = '';
+  let path = '';
+
+  beforeAll(async () => {
+    mine = orgId;
+    theirs = await otherOrganizerClient();
+    const { data: u } = await theirs.auth.getUser();
+    const { data: org } = await theirs.from('organizations')
+      .select('id').eq('owner_id', u.user!.id).limit(1).maybeSingle();
+    theirOrg = org?.id ?? (await theirs.from('organizations')
+      .insert({ owner_id: u.user!.id, slug: uniqueSlug('mark-org'), name: 'Mark Org' })
+      .select('id').single()).data!.id;
+  });
+
+  afterAll(async () => {
+    if (path) {
+      await organizer.from('organization_images').delete().eq('org_id', mine).eq('kind', 'logo');
+      await organizer.storage.from('org-logos').remove([path]);
+    }
+    await theirs.auth.signOut();
+  });
+
+  test('the owner can put one in their own folder', async () => {
+    path = `${mine}/${crypto.randomUUID()}.png`;
+    const { error } = await organizer.storage.from('org-logos')
+      .upload(path, png, { contentType: 'image/png' });
+    expect(error).toBeNull();
+
+    const { error: rowErr } = await organizer.from('organization_images')
+      .upsert({ org_id: mine, kind: 'logo', bucket: 'org-logos', path,
+                content_type: 'image/png', bytes: png.length },
+              { onConflict: 'org_id,kind' });
+    expect(rowErr).toBeNull();
+  });
+
+  test('but not into somebody else\'s', async () => {
+    const { error } = await organizer.storage.from('org-logos')
+      .upload(`${theirOrg}/${crypto.randomUUID()}.png`, png, { contentType: 'image/png' });
+    expect(error).not.toBeNull();
+  });
+
+  test('nor claim one for their organization', async () => {
+    const { error } = await organizer.from('organization_images')
+      .insert({ org_id: theirOrg, kind: 'logo', bucket: 'org-logos', path: 'x/y.png' });
+    expect(error).not.toBeNull();
+  });
+
+  test('the table is invisible to a voter', async () => {
+    const { data } = await voter.from('organization_images').select('id');
+    expect(data ?? []).toHaveLength(0);
+  });
+
+  test('and invisible to another organizer', async () => {
+    const { data } = await theirs.from('organization_images').select('org_id');
+    for (const row of data ?? []) expect(row.org_id).toBe(theirOrg);
+  });
+
+  test('a voter gets the path for a published ballot all the same', async () => {
+    await organizer.from('ballots').update({ status: 'live' }).eq('id', ballotId);
+    await organizer.rpc('renew_ballot', { p_ballot: ballotId });
+
+    const { data } = await voter.rpc('ballot_logo', { p_ballot: ballotId });
+    expect(data).toBe(path);
+  });
+
+  test('but not for a draft one', async () => {
+    await organizer.from('ballots').update({ status: 'draft' }).eq('id', ballotId);
+    const { data } = await voter.rpc('ballot_logo', { p_ballot: ballotId });
+    expect(data).toBeNull();
+    await organizer.from('ballots').update({ status: 'live' }).eq('id', ballotId);
+  });
+
+  test('it rides along with the waiting screen and the tally', async () => {
+    const lobby = await state(pins[1]!, 'fp-mark');
+    expect((lobby as unknown as { ballot: { org_logo_path: string } }).ballot.org_logo_path)
+      .toBe(path);
+
+    const results = await call<{ ballot: { org_logo_path: string } }>(
+      organizer, 'ballot_results', { p_ballot: ballotId });
+    expect(results.ballot.org_logo_path).toBe(path);
+  });
+
+  test('removing the row leaves nothing for a voter to fetch', async () => {
+    await organizer.from('organization_images').delete().eq('org_id', mine).eq('kind', 'logo');
+    const { data } = await voter.rpc('ballot_logo', { p_ballot: ballotId });
+    expect(data).toBeNull();
+
+    // put it back for the teardown to clear
+    await organizer.from('organization_images')
+      .insert({ org_id: mine, kind: 'logo', bucket: 'org-logos', path,
+                content_type: 'image/png', bytes: png.length });
+  });
+});
+
 describe('a ballot has a lifetime', () => {
   test('it is born with thirty days on the clock', async () => {
     const { data } = await organizer.from('ballots')

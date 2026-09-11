@@ -90,6 +90,9 @@ function PinGate() {
           </p>
           {choices.map((c) => (
             <button key={c.ballot_id} className="lobby-item" onClick={() => open(c, pin)}>
+              {api.logoUrl(c.org_logo_path)
+                ? <img className="ballot-mark small" src={api.logoUrl(c.org_logo_path)!} alt="" />
+                : null}
               <span className="lobby-body">
                 <span className="lobby-title">{c.title}</span>
                 <span className="faint" style={{ display: 'block' }}>{c.org_name}</span>

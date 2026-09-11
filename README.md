@@ -143,6 +143,27 @@ of their own ballot. The voter-facing functions **return** their errors rather
 than raising them, because a raise would roll back the counter along with
 everything else.
 
+## An organization's mark
+
+An organizer can set a logo from **Settings** on their organization card. It
+shows on the ballot a voter opens, on the public results, on each printed slip,
+and in the middle of every QR on that sheet.
+
+The image lives in a storage bucket; `organization_images` records which object
+belongs to which organization and is owner-only. The bucket is public to *read* —
+a voter has to see the mark without an account, and a signed URL per slip on a
+printed sheet cannot work — and writable only into `<org id>/…`, which the
+storage policies check with `app.owns_organization`. The path reaches a voter
+through `voter_state`, `ballot_results`, `find_ballots_for_pin` and
+`ballot_logo`, so nothing had to make a directory of organizations readable
+again.
+
+The QR carries the mark over about 5% of its area, well inside what error
+correction level M recovers. Printed sheets inline it as a data URI, because
+`window.print()` does not wait for a network image and a sheet with a hole in
+every code is worse than one with no mark. A test decodes every code on a
+printed sheet and checks each one still reads back the exact voting URL.
+
 ## Setting up a ballot
 
 Options can be pasted rather than typed one at a time: the box takes a name, a

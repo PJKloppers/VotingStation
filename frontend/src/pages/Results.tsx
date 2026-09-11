@@ -44,6 +44,9 @@ export function Results({ ballotId }: { ballotId: string }) {
   return (
     <main>
       <div className="section-head">
+        {api.logoUrl(data.ballot.org_logo_path)
+          ? <img className="ballot-mark" src={api.logoUrl(data.ballot.org_logo_path)!} alt="" />
+          : null}
         <div>
           <p className="eyebrow">Results</p>
           <h1>{data.ballot.title}</h1>

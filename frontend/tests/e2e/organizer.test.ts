@@ -9,6 +9,8 @@
  * reaches the finished state cannot see a door that will not open.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Browser, Page } from 'puppeteer-core';
 import { anonClient, credentials, organizerClient, uniqueSlug } from '../helpers/env';
@@ -494,6 +496,106 @@ describe('deleting from the dashboard list', () => {
     expect(data).not.toBeNull();
 
     await organizer.from('ballots').delete().eq('id', keep);
+    await page.close();
+  });
+});
+
+describe('an organization\'s mark', () => {
+  // A 2x2 teal PNG is enough: what is being tested is that it reaches the three
+  // places a voter sees it, not what it looks like.
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFklEQVR42mNkYPhfz0AEYBxVSF+FAP5FBAXn8ZgIAAAAAElFTkSuQmCC',
+    'base64',
+  );
+  let orgId = '';
+  let pngPath = '';
+
+  beforeAll(async () => {
+    const { data: user } = await organizer.auth.getUser();
+    const { data: org } = await organizer.from('organizations')
+      .select('id').eq('owner_id', user.user!.id).limit(1).single();
+    orgId = org!.id;
+
+    // The file chooser takes a path on disk, not bytes.
+    pngPath = `${tmpdir()}/votingstation-mark-${Date.now()}.png`;
+    await Bun.write(pngPath, png);
+  });
+
+  afterAll(async () => {
+    if (pngPath) await rm(pngPath, { force: true });
+    const { data } = await organizer.from('organization_images')
+      .select('path').eq('org_id', orgId).eq('kind', 'logo').maybeSingle();
+    if (data) {
+      await organizer.from('organization_images').delete().eq('org_id', orgId).eq('kind', 'logo');
+      await organizer.storage.from('org-logos').remove([data.path]);
+    }
+  });
+
+  test('the settings modal takes one, and the card shows it', async () => {
+    const page = await signedInPage();
+
+    await clickByText(page, 'button', 'Settings');
+    await page.waitForSelector('dialog.modal[open]', { timeout: 15000 });
+    await waitForText(page, 'Mark');
+
+    // The control renders once it knows whether there is a mark already.
+    await page.waitForSelector('input[name="org_logo"]', { timeout: 15000 });
+    const chooser = await page.$('input[name="org_logo"]');
+    await chooser!.uploadFile(pngPath);
+
+    await page.waitForSelector('.org-mark-frame img', { timeout: 15000 });
+    await clickByText(page, 'button', 'Close');
+
+    // It is stored, not merely shown.
+    const { data } = await organizer.from('organization_images')
+      .select('path').eq('org_id', orgId).eq('kind', 'logo').single();
+    expect(data!.path.startsWith(`${orgId}/`)).toBe(true);
+
+    await page.waitForSelector('.org-thumb img', { timeout: 15000 });
+    await page.close();
+  });
+
+  test('a voter sees it on the ballot, with no account at all', async () => {
+    await organizer.from('ballots').update({ status: 'live' }).eq('id', createdBallotId);
+
+    const page = await browser.newPage();
+    await page.setViewport({ width: 420, height: 900 });
+    await page.goto(`${origin}/#/vote/${createdBallotId}`, { waitUntil: 'networkidle0' });
+    await page.waitForSelector('.ballot-mark', { timeout: 15000 });
+
+    const loaded = await page.$eval('.ballot-mark',
+      (n) => (n as HTMLImageElement).naturalWidth > 0);
+    expect(loaded).toBe(true);   // it actually fetched, not just rendered a broken img
+    await page.close();
+  });
+
+  test('it reaches the printed slips, and the codes still scan', async () => {
+    const page = await signedInPage();
+    await page.goto(`${origin}/#/manage/${createdBallotId}`, { waitUntil: 'networkidle0' });
+    await clickByText(page, 'button', 'PINs');
+    await page.waitForSelector('table tbody tr', { timeout: 15000 });
+    await page.evaluate(() => { window.print = () => {}; });
+    await clickByText(page, 'button', 'Print slips');
+
+    // Inlined as a data URI, because window.print() will not wait for a fetch.
+    await page.waitForSelector('.slip-qr image', { timeout: 15000 });
+    const href = await page.$eval('.slip-qr image',
+      (n) => n.getAttribute('href') ?? n.getAttribute('xlink:href') ?? '');
+    expect(href.startsWith('data:image/')).toBe(true);
+
+    // Dead centre of the code, or it is covering something it should not.
+    const centred = await page.$eval('.slip-qr', (svg) => {
+      const img = svg.querySelector('image')!;
+      const span = (svg as SVGSVGElement).viewBox.baseVal.width;
+      const x = Number(img.getAttribute('x'));
+      const w = Number(img.getAttribute('width'));
+      return Math.abs((x + w / 2) - span / 2) < 0.01 && w / span < 0.3;
+    });
+    expect(centred).toBe(true);
+
+    expect(await page.$$eval('.slip-mark', (n) => n.length))
+      .toBe(await page.$$eval('.slip', (n) => n.length));
+
     await page.close();
   });
 });

@@ -8,6 +8,19 @@ export const QUESTION_TYPE_NAMES: Record<QuestionType, string> = {
   highest_x: 'Highest X options',
 };
 
+/** An organization's mark, as stored. */
+export interface OrganizationImage {
+  id: string;
+  org_id: string;
+  kind: 'logo';
+  bucket: string;
+  path: string;
+  content_type: string;
+  bytes: number | null;
+  width: number | null;
+  height: number | null;
+}
+
 export interface Organization {
   id: string;
   owner_id: string;
@@ -25,6 +38,7 @@ export interface PinMatch {
   status: 'live' | 'closed';
   org_name: string;
   org_slug: string;
+  org_logo_path: string | null;
 }
 
 export interface Ballot {
@@ -134,6 +148,8 @@ export interface VoterState {
     all_done_message: string;
     already_voted_message: string;
     lobby_refresh_seconds: number;
+    /** Path into the public logo bucket, or null. */
+    org_logo_path: string | null;
   };
   voter: { weight: number };
   progress: { voted: number; open_now: number; total: number };
@@ -233,7 +249,10 @@ export type QuestionResult =
 export interface BallotResults {
   ok: true;
   updated: string;
-  ballot: { id: string; title: string; description: string; status: string; mode: string };
+  ballot: {
+    id: string; title: string; description: string; status: string; mode: string;
+    org_logo_path: string | null;
+  };
   turnout: { issued: number; used: number; eligible: number };
   /** Questions not published yet, so a short list does not read as the whole ballot. */
   withheld: number;

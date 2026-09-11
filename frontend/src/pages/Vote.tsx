@@ -29,6 +29,7 @@ import { QuestionTally } from './Results';
 
 export function Vote({ ballotId }: { ballotId: string }) {
   const [ballot, setBallot] = useState<Ballot | null>(null);
+  const [logo, setLogo] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [pin, setPin] = useState('');
   const [state, setState] = useState<VoterState | null>(null);
@@ -40,6 +41,11 @@ export function Vote({ ballotId }: { ballotId: string }) {
     api.ballotById(ballotId)
       .then((b) => { if (live) { setBallot(b); setLoading(false); } })
       .catch(() => { if (live) setLoading(false); });
+    // The mark is on the organization, not the ballot, so it comes separately --
+    // and before a PIN, since it belongs on the very first screen.
+    api.ballotLogoPath(ballotId)
+      .then((path) => { if (live) setLogo(api.logoUrl(path)); })
+      .catch(() => {});
     return () => { live = false; };
   }, [ballotId]);
 
@@ -104,10 +110,13 @@ export function Vote({ ballotId }: { ballotId: string }) {
   return (
     <main className="narrow">
       <div className="stack">
-        <header>
-          <p className="eyebrow">Ballot</p>
-          <h1>{ballot.title}</h1>
-          {ballot.description ? <p className="lede">{ballot.description}</p> : null}
+        <header className="ballot-head">
+          {logo ? <img className="ballot-mark" src={logo} alt="" /> : null}
+          <div>
+            <p className="eyebrow">Ballot</p>
+            <h1>{ballot.title}</h1>
+            {ballot.description ? <p className="lede">{ballot.description}</p> : null}
+          </div>
         </header>
 
         {error ? <Banner kind="error">{error}</Banner> : null}

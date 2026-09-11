@@ -6,12 +6,12 @@
  * configuration is ordinary table access that row level security already
  * guards. Nothing here decides anything -- it only asks.
  */
-import { supabase } from './supabase';
+import { supabase, SUPABASE_URL } from './supabase';
 import { fingerprint } from './fingerprint';
 import type {
   Accepted, Ballot, BallotResults, HighestOutrightQuestion, HighestXQuestion,
-  Organization, PinMatch, QuestionOption, QuestionType, Refused,
-  TokenReport, VoterState, YesNoQuestion,
+  Organization, OrganizationImage, PinMatch, QuestionOption, QuestionType,
+  Refused, TokenReport, VoterState, YesNoQuestion,
 } from './types';
 
 export class ApiError extends Error {}
@@ -107,6 +107,88 @@ export async function ballotById(id: string): Promise<Ballot | null> {
   const { data } = await supabase
     .from('ballots').select(BALLOT_COLUMNS).eq('id', id).maybeSingle();
   return data as Ballot | null;
+}
+
+/* ---------------------------------------------------------------- the mark
+ * An organization's logo. The bucket is public to read -- a voter has to see it
+ * without an account, and a signed URL per slip on a printed sheet cannot work
+ * -- so the client only ever needs the path.
+ */
+
+export const LOGO_BUCKET = 'org-logos';
+
+/** The public URL of a stored object. */
+export function logoUrl(path: string | null | undefined): string | null {
+  if (!path) return null;
+  return `${SUPABASE_URL}/storage/v1/object/public/${LOGO_BUCKET}/${path}`;
+}
+
+/** Every mark this user owns, keyed by organization. One query for a dashboard. */
+export async function myOrgLogos(): Promise<Record<string, string>> {
+  const { data, error } = await supabase
+    .from('organization_images').select('org_id, path').eq('kind', 'logo');
+  if (error) throw new ApiError(error.message);
+  return Object.fromEntries((data ?? []).map((r) => [r.org_id, r.path]));
+}
+
+export async function orgLogo(orgId: string): Promise<OrganizationImage | null> {
+  const { data } = await supabase
+    .from('organization_images')
+    .select('*').eq('org_id', orgId).eq('kind', 'logo').maybeSingle();
+  return data;
+}
+
+/**
+ * Replaces an organization's logo.
+ *
+ * The old object is removed after the new row is written, not before: a failed
+ * upload should leave the organization with the mark it had.
+ */
+export async function uploadOrgLogo(orgId: string, file: File): Promise<OrganizationImage> {
+  const ext = (file.name.split('.').pop() ?? 'png').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const path = `${orgId}/${crypto.randomUUID()}.${ext || 'png'}`;
+
+  const { error: upErr } = await supabase.storage
+    .from(LOGO_BUCKET)
+    .upload(path, file, { contentType: file.type || 'image/png', upsert: false });
+  if (upErr) throw new ApiError(upErr.message);
+
+  const previous = await orgLogo(orgId);
+
+  const { data, error } = await supabase
+    .from('organization_images')
+    .upsert({
+      org_id: orgId, kind: 'logo', bucket: LOGO_BUCKET, path,
+      content_type: file.type || 'image/png', bytes: file.size,
+    }, { onConflict: 'org_id,kind' })
+    .select().single();
+
+  if (error) {
+    // Do not leave an orphan in the bucket behind a failed write.
+    await supabase.storage.from(LOGO_BUCKET).remove([path]);
+    throw new ApiError(error.message);
+  }
+
+  if (previous && previous.path !== path) {
+    await supabase.storage.from(LOGO_BUCKET).remove([previous.path]);
+  }
+  return data;
+}
+
+export async function removeOrgLogo(orgId: string): Promise<void> {
+  const current = await orgLogo(orgId);
+  if (!current) return;
+  const { error } = await supabase
+    .from('organization_images').delete().eq('org_id', orgId).eq('kind', 'logo');
+  if (error) throw new ApiError(error.message);
+  await supabase.storage.from(LOGO_BUCKET).remove([current.path]);
+}
+
+/** The mark on the organization behind a ballot, for a page with no session. */
+export async function ballotLogoPath(ballotId: string): Promise<string | null> {
+  const { data, error } = await supabase.rpc('ballot_logo', { p_ballot: ballotId });
+  if (error) throw new ApiError(error.message);
+  return data;
 }
 
 /* ----------------------------------------------------------- the organizer */

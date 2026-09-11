@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import * as api from '../lib/api';
 import type { TokenReport, TokenRow } from '../lib/types';
-import { encodeQr, QUIET, qrPath } from '../lib/qr';
+import { encodeQr, QUIET, qrPath, type QrCode } from '../lib/qr';
 import { href } from '../lib/router';
 import { Banner, Card, Field, Pill, Spinner } from '../components/ui';
 
@@ -13,6 +13,25 @@ export function Tokens({ ballotId, ballotTitle }: { ballotId: string; ballotTitl
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [printing, setPrinting] = useState(false);
+  const [mark, setMark] = useState<string | null>(null);
+
+  // Inlined as a data URI rather than left as a URL: window.print() does not
+  // wait for a network image, and a sheet that prints with a hole in every QR
+  // is worse than one with no mark at all.
+  useEffect(() => {
+    let live = true;
+    void (async () => {
+      try {
+        const url = api.logoUrl(await api.ballotLogoPath(ballotId));
+        if (!url) return;
+        const blob = await (await fetch(url)).blob();
+        const reader = new FileReader();
+        reader.onload = () => { if (live) setMark(String(reader.result)); };
+        reader.readAsDataURL(blob);
+      } catch { /* a missing mark is not a reason to fail the page */ }
+    })();
+    return () => { live = false; };
+  }, [ballotId]);
 
   const load = useCallback(async () => {
     try {
@@ -157,7 +176,10 @@ export function Tokens({ ballotId, ballotTitle }: { ballotId: string; ballotTitl
         </div>
       </Card>
 
-      {printing ? <PrintSheet ballotId={ballotId} title={ballotTitle} tokens={report.tokens} /> : null}
+      {printing
+        ? <PrintSheet ballotId={ballotId} title={ballotTitle}
+                      tokens={report.tokens} mark={mark} />
+        : null}
     </div>
   );
 }
@@ -169,8 +191,40 @@ export function Tokens({ ballotId, ballotTitle }: { ballotId: string; ballotTitl
  * Every slip carries the same QR -- it points at the ballot, not at the PIN --
  * so it is encoded once and drawn from the one path.
  */
-function PrintSheet({ ballotId, title, tokens }: {
-  ballotId: string; title: string; tokens: TokenRow[];
+/**
+ * The code with the organization's mark in the middle.
+ *
+ * The encoder is error correction level M, which recovers about 15% of a
+ * damaged code. The patch below covers roughly 5% of the area, well inside
+ * that -- and the printed result is decoded in the test rather than assumed.
+ */
+function QrWithMark({ code, mark }: { code: QrCode; mark: string | null }) {
+  const span = code.size + QUIET * 2;
+  const patch = span * 0.22;
+  const at = (span - patch) / 2;
+
+  return (
+    <svg className="slip-qr" shapeRendering="crispEdges"
+         viewBox={`0 0 ${span} ${span}`}
+         role="img" aria-label="Link to the ballot">
+      <rect width="100%" height="100%" fill="#fff" />
+      <path d={qrPath(code)} fill="#000" />
+      {mark ? (
+        <>
+          {/* A quiet square under it, or the mark sits on modules and the
+              scanner has two problems instead of one. */}
+          <rect x={at - 0.6} y={at - 0.6} width={patch + 1.2} height={patch + 1.2}
+                rx={1} fill="#fff" />
+          <image href={mark} x={at} y={at} width={patch} height={patch}
+                 preserveAspectRatio="xMidYMid meet" />
+        </>
+      ) : null}
+    </svg>
+  );
+}
+
+function PrintSheet({ ballotId, title, tokens, mark }: {
+  ballotId: string; title: string; tokens: TokenRow[]; mark: string | null;
 }) {
   const url = `${window.location.origin}${window.location.pathname}${href(`/vote/${ballotId}`)}`;
   const code = encodeQr(url);
@@ -190,16 +244,12 @@ function PrintSheet({ ballotId, title, tokens }: {
           {/* Black on white regardless of theme: a scanner wants dark modules
               on a light quiet zone, and paper is light either way. crispEdges
               so the modules do not blur into each other. */}
-          {code ? (
-            <svg className="slip-qr" shapeRendering="crispEdges"
-                 viewBox={`0 0 ${code.size + QUIET * 2} ${code.size + QUIET * 2}`}
-                 role="img" aria-label="Link to the ballot">
-              <rect width="100%" height="100%" fill="#fff" />
-              <path d={qrPath(code)} fill="#000" />
-            </svg>
-          ) : null}
+          {code ? <QrWithMark code={code} mark={mark} /> : null}
           <div className="slip-body">
-            <div className="slip-title">{title}</div>
+            <div className="slip-title">
+              {mark ? <img className="slip-mark" src={mark} alt="" /> : null}
+              {title}
+            </div>
             <div className="slip-pin">{t.pin}</div>
             <div className="slip-url">{url.replace(/^https?:\/\//, '')}</div>
           </div>
