@@ -732,6 +732,100 @@ describe('deleting a PIN', () => {
   });
 });
 
+describe('disabling a PIN that has already voted', () => {
+  // Disable stops a PIN voting again. It does not touch what it already cast --
+  // that is what reset (void, keep the trail) and delete (remove it) are for.
+  let scratch = '';
+  let question = '';
+  let voted = '';
+  let silent = '';
+
+  const tally = async () => {
+    const r = await call<{ questions: Array<{ voted: number; expected: number; tally: { cast: number } }> }>(
+      organizer, 'ballot_results', { p_ballot: scratch });
+    return r.questions[0]!;
+  };
+  const step = () => call<{ ok: boolean; waiting?: { voted: number; eligible: number } }>(
+    organizer, 'advance_ballot', { p_ballot: scratch });
+  const reopen = async () => {
+    await organizer.from('ballots').update({ status: 'live' }).eq('id', scratch);
+    await call(organizer, 'set_gate', {
+      p_ballot: scratch, p_type: 'yes_no', p_question: question, p_open: true, p_only: true,
+    });
+  };
+
+  beforeAll(async () => {
+    const { data: b } = await organizer.from('ballots').insert({
+      org_id: orgId, slug: uniqueSlug('disabled'), title: 'Disable probe',
+      status: 'live', mode: 'gated', require_all_pins: true,
+    }).select('id').single();
+    scratch = b!.id;
+
+    const { data: q } = await organizer.from('questions_yes_no').insert({
+      ballot_id: scratch, prompt: 'Carry it', sort_order: 1,
+    }).select('id').single();
+    question = q!.id;
+    await reopen();
+
+    const minted = await call<Array<{ pin: string }>>(organizer, 'issue_tokens', {
+      p_ballot: scratch, p_count: 2,
+    });
+    voted = minted[0]!.pin;
+    silent = minted[1]!.pin;
+
+    await call<Answer>(voter, 'cast_yes_no', {
+      p_ballot: scratch, p_pin: voted, p_question: question,
+      p_choice: 'yes', p_fingerprint: 'fp-disabled',
+    });
+  });
+
+  afterAll(async () => {
+    if (scratch) await organizer.from('ballots').delete().eq('id', scratch);
+  });
+
+  test('the vote it already cast is untouched', async () => {
+    const before = await tally();
+    expect(before.tally.cast).toBe(1);
+
+    await organizer.from('ballot_tokens')
+      .update({ status: 'disabled' }).eq('ballot_id', scratch).eq('pin', voted);
+
+    const after = await tally();
+    expect(after.tally.cast).toBe(1);
+    expect(after.voted).toBe(1);
+  });
+
+  test('and it is still counted as one of the voters expected', async () => {
+    // Otherwise disabling a voter would let their vote stand for the room.
+    const now = await tally();
+    expect(now.expected).toBe(2);
+  });
+
+  test('so the chair is still held for the PIN that has not voted', async () => {
+    const held = await step();
+    expect(held.ok).toBe(false);
+    expect(held.waiting).toMatchObject({ voted: 1, eligible: 2 });
+  });
+
+  test('a PIN disabled before voting is not waited for', async () => {
+    await organizer.from('ballot_tokens')
+      .update({ status: 'disabled' }).eq('ballot_id', scratch).eq('pin', silent);
+
+    const now = await tally();
+    expect(now.expected).toBe(1);
+
+    const moved = await step();
+    expect(moved.ok).toBe(true);
+  });
+
+  test('the vote survives even the PIN being re-enabled and the ballot reopened', async () => {
+    await organizer.from('ballot_tokens')
+      .update({ status: 'active' }).eq('ballot_id', scratch).eq('pin', voted);
+    await reopen();
+    expect((await tally()).tally.cast).toBe(1);
+  });
+});
+
 describe('waiting for every PIN', () => {
   type Step = { ok: boolean; error?: string; action?: string;
                 waiting?: { voted: number; eligible: number } };

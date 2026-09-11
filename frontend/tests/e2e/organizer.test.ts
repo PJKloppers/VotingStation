@@ -206,6 +206,50 @@ test('the Issue PINs button mints them and lists them', async () => {
     await page.close();
   });
 
+test('the print sheet makes one slip per active PIN', async () => {
+    const page = await signedInPage();
+    await page.goto(`${origin}/#/manage/${createdBallotId}`, { waitUntil: 'networkidle0' });
+    await waitForText(page, title);
+    await clickByText(page, 'button', 'PINs');
+    await page.waitForSelector('table tbody tr', { timeout: 15000 });
+
+    // Headless has no dialog; stub it so the press cannot block.
+    await page.evaluate(() => { window.print = () => {}; });
+    await clickByText(page, 'button', 'Print slips');
+    await page.waitForSelector('.print-sheet .slip', { timeout: 15000 });
+
+    const slips = await page.$$eval('.slip', (nodes) => nodes.length);
+    const pinsOnSlips = await page.$$eval('.slip-pin',
+      (nodes) => nodes.map((n) => (n as HTMLElement).textContent!.trim()));
+
+    const { data } = await organizer.from('ballot_tokens')
+      .select('pin').eq('ballot_id', createdBallotId).eq('status', 'active');
+    expect(slips).toBe((data ?? []).length);
+    expect(pinsOnSlips.sort()).toEqual((data ?? []).map((t) => t.pin).sort());
+
+    // Each slip carries the ballot and a scannable way in.
+    const titles = await page.$$eval('.slip-title',
+      (nodes) => nodes.map((n) => (n as HTMLElement).textContent!.trim()));
+    expect(new Set(titles)).toEqual(new Set([title]));
+    expect(await page.$$eval('.slip-qr', (n) => n.length)).toBe(slips);
+
+    // On screen it is invisible; on paper it is the only thing there.
+    const onScreen = await page.$eval('.print-sheet',
+      (n) => getComputedStyle(n).display);
+    expect(onScreen).toBe('none');
+
+    await page.emulateMediaType('print');
+    const onPaper = await page.evaluate(() => ({
+      sheet: getComputedStyle(document.querySelector('.print-sheet')!).display,
+      chrome: getComputedStyle(document.querySelector('.topbar')!).display,
+    }));
+    expect(onPaper.sheet).not.toBe('none');
+    expect(onPaper.chrome).toBe('none');
+
+    await page.emulateMediaType(undefined);
+    await page.close();
+  });
+
   test('publishing it opens the ballot to voters', async () => {
     const page = await signedInPage();
     await page.goto(`${origin}/#/manage/${createdBallotId}`, { waitUntil: 'networkidle0' });

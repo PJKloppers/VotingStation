@@ -76,7 +76,7 @@ export function Manage({ ballotId }: { ballotId: string }) {
 
       {tab === 'Live' ? <Live ballot={ballot} onFinished={load} /> : null}
       {tab === 'Questions' ? <Questions ballotId={ballot.id} /> : null}
-      {tab === 'PINs' ? <Tokens ballotId={ballot.id} /> : null}
+      {tab === 'PINs' ? <Tokens ballotId={ballot.id} ballotTitle={ballot.title} /> : null}
       {tab === 'Settings' ? <Settings ballot={ballot} onSaved={load} /> : null}
       {tab === 'Results' ? <Results ballotId={ballot.id} /> : null}
       {tab === 'Links' ? <AdminLinks ballot={ballot} /> : null}
@@ -222,9 +222,10 @@ function Live({ ballot, onFinished }: { ballot: Ballot; onFinished: () => void }
               {q.gate_open ? <Pill tone="open">Open</Pill> : <Pill tone="closed">Closed</Pill>}
             </div>
 
+            {/* Per question, not per ballot: who is expected on this one. */}
             <Turnout
-              voted={tally ? votersOn(tally) : 0}
-              eligible={results?.turnout.eligible ?? 0}
+              voted={tally?.voted ?? 0}
+              expected={tally?.expected ?? 0}
               required={ballot.require_all_pins}
             />
             <div className="row" style={{ marginTop: 14 }}>
@@ -263,23 +264,23 @@ function Live({ ballot, onFinished }: { ballot: Ballot; onFinished: () => void }
  * before they have to ask. When the ballot waits for everyone, the same bar is
  * also the thing standing between them and the next question, so it says so.
  */
-function Turnout({ voted, eligible, required }: {
-  voted: number; eligible: number; required: boolean;
+function Turnout({ voted, expected, required }: {
+  voted: number; expected: number; required: boolean;
 }) {
-  if (eligible === 0) return null;
-  const all = voted >= eligible;
+  if (expected === 0) return null;
+  const all = voted >= expected;
 
   return (
     <div style={{ marginTop: 10 }}>
       <div className="row" style={{ gap: 8, marginBottom: 2 }}>
-        <span className="faint grow">{voted} of {eligible} PINs voted</span>
+        <span className="faint grow">{voted} of {expected} PINs voted</span>
         {required
           ? all
             ? <Pill tone="carried">All in</Pill>
-            : <Pill tone="pending">Waiting for {eligible - voted}</Pill>
+            : <Pill tone="pending">Waiting for {expected - voted}</Pill>
           : null}
       </div>
-      <Rail value={voted / eligible} />
+      <Rail value={voted / expected} />
     </div>
   );
 }
@@ -299,8 +300,8 @@ function stepLabel(enabled: AnyQuestion[], results: BallotResults | null): strin
   const { open, next } = nextInLine(enabled);
   if (enabled.length === 0) return 'No questions on the ballot yet.';
   if (!open) return `Nothing is open. Next up: "${next?.prompt ?? '—'}".`;
-  const voted = results?.questions.find((r) => r.id === open.id);
-  const count = voted ? ` · ${votersOn(voted)} voted so far` : '';
+  const here = results?.questions.find((r) => r.id === open.id);
+  const count = here ? ` · ${here.voted} of ${here.expected} voted so far` : '';
   return next
     ? `Open: "${open.prompt}"${count}. Next: "${next.prompt}".`
     : `Open: "${open.prompt}"${count}. This is the last question.`;
@@ -310,10 +311,6 @@ function stepButton(enabled: AnyQuestion[]): string {
   const { open, next } = nextInLine(enabled);
   if (!open) return 'Open the first question';
   return next ? 'Close and open the next' : 'Close and end the ballot';
-}
-
-function votersOn(result: QuestionResult): number {
-  return result.type === 'yes_no' ? result.tally.voters : result.tally.voters;
 }
 
 /** The one line of the tally that a chairperson actually watches. */

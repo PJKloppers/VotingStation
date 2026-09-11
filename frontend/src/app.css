@@ -649,3 +649,59 @@ button.share-copy[data-state="copied"]:hover {
   .create-foot > .quota { margin-left: 0; }
   .create-actions > .quota { margin-left: 0; width: 100%; }
 }
+
+/* ------------------------------------------------------------ exit voting
+   Full width and at the very end of the page: it is the last thing a voter
+   wants, and the one thing they must not hit on the way past a question. */
+
+.exit-voting {
+  width: 100%; margin-top: 12px;
+  min-height: 60px; font-size: 1.05rem;
+  background: var(--surface-2); color: var(--ink-soft);
+  border: 1px solid var(--rule);
+}
+.exit-voting:hover { background: var(--rule-soft); color: var(--ink); }
+
+/* -------------------------------------------------------------- PIN slips
+   A sheet that exists only on paper. The app is hidden rather than the sheet
+   being a second document, so there is nothing to keep in step with the page
+   that generated it -- and no popup for a browser to block. */
+
+.print-sheet { display: none; }
+
+@media print {
+  /* Everything but the slips goes. */
+  .topbar, footer.site, .tabs, .section-head, .card, .banner { display: none !important; }
+
+  body { background: #fff; color: #000; }
+  main { max-width: none; padding: 0; }
+
+  .print-sheet {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0;
+  }
+
+  .slip {
+    /* A cut line, and enough room that scissors are forgiving. */
+    border: 1px dashed #999;
+    padding: 14mm 8mm;
+    text-align: center;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .slip-title {
+    font-family: var(--serif); font-size: 11pt; font-weight: 600;
+    margin-bottom: 6mm;
+  }
+  .slip-pin {
+    font-family: var(--mono); font-size: 26pt; font-weight: 700;
+    letter-spacing: 0.28em; text-indent: 0.28em;
+    margin-bottom: 5mm;
+  }
+  .slip-qr { width: 26mm; height: 26mm; display: block; margin: 0 auto 3mm; }
+  .slip-url { font-size: 8pt; color: #333; word-break: break-all; }
+
+  @page { margin: 10mm; }
+}

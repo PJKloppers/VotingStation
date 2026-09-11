@@ -12,7 +12,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Browser, Page } from 'puppeteer-core';
 import { anonClient, credentials, organizerClient, uniqueSlug } from '../helpers/env';
-import { clickByText, enterPin, launchBrave, serveStatic, waitForText } from '../helpers/browser';
+import { clickByText, clickWithin, enterPin, launchBrave, serveStatic, waitForText } from '../helpers/browser';
 
 const DIST = new URL('../../dist', import.meta.url).pathname;
 
@@ -124,38 +124,32 @@ describe('the voter', () => {
     await clickByText(page, 'button', 'Open my ballot');
 
     await waitForText(page, 'Adopt the minutes');
-    await clickByText(page, '.lobby-item', 'Adopt the minutes');
-    await waitForText(page, 'Yes');
-    await clickByText(page, '.choice', 'Yes');
+    // Answered in place -- no tapping into a question and backing out again.
+    await clickWithin(page, '.card', 'Adopt the minutes', '.choice', 'Yes');
+    await clickWithin(page, '.card', 'Adopt the minutes', 'button', 'Submit my vote');
 
-    // show_results_after is on, but the gate is necessarily open at the moment
-    // a vote is cast, so the receipt carries no count -- only the promise of one.
-    await waitForText(page, 'Thank you');
-    await waitForText(page, 'once the chair closes this question');
-    const receipt = await page.evaluate(() => document.body.innerText);
-    expect(receipt).not.toContain('Carried');
+    // Recorded in place; no count yet, because the gate is still open.
+    await waitForText(page, 'Your answer is recorded');
+    const board = await page.evaluate(() => document.body.innerText);
+    expect(board).not.toContain('Carried');
 
-    await clickByText(page, 'button', 'Back to the ballot');
-    await waitForText(page, 'Change');       // allow_vote_change is on
-
-    // The chair closes it, and the count appears on the waiting screen.
+    // The chair closes it, and the count appears further down the same page.
     await organizer.rpc('close_all_gates', { p_ballot: ballotId });
     await clickByText(page, 'button', 'Reload');
-    await waitForText(page, 'Results');
     await waitForText(page, 'Carried');
 
     await organizer.rpc('set_gate', {
       p_ballot: ballotId, p_type: 'yes_no', p_question: motionId, p_open: true, p_only: true,
     });
     await clickByText(page, 'button', 'Reload');
-    await waitForText(page, 'Change');
+    await waitForText(page, 'Answered');
 
     await organizer.from('ballots').update({ allow_vote_change: false }).eq('id', ballotId);
     await clickByText(page, 'button', 'Reload');
-    await waitForText(page, 'Voted');
-    const settled = await page.$$eval('.lobby-item', (nodes) =>
-      nodes.map((n) => (n as HTMLButtonElement).disabled));
-    expect(settled).toContain(true);
+    await waitForText(page, 'You have already voted on this question');
+    const stillOffered = await page.$$eval('button',
+      (nodes) => nodes.some((n) => n.innerText.trim() === 'Submit my vote'));
+    expect(stillOffered).toBe(false);
 
     await organizer.from('ballots').update({ allow_vote_change: true }).eq('id', ballotId);
     await page.close();
@@ -177,11 +171,25 @@ describe('the voter', () => {
     const text = await page.evaluate(() => document.body.innerText);
     expect(text).not.toContain('Adopt the minutes');
 
-    await clickByText(page, '.lobby-item', 'Elect the chair');
-    await waitForText(page, 'Ann Meyer');
-    await clickByText(page, '.choice', 'Ann Meyer');
-    await clickByText(page, 'button', 'Submit my vote');
-    await waitForText(page, 'Thank you');
+    // Its options are already on screen; nothing to open first.
+    await clickWithin(page, '.card', 'Elect the chair', '.choice', 'Ann Meyer');
+    await clickWithin(page, '.card', 'Elect the chair', 'button', 'Submit my vote');
+    await waitForText(page, 'Your answer is recorded');
+    await page.close();
+  });
+
+test('exit voting hands the ballot back and asks for a PIN again', async () => {
+    const page = await newPage();
+    await page.goto(`${origin}/#/vote/${ballotId}`, { waitUntil: 'networkidle0' });
+    await enterPin(page, pins[1]!);
+    await clickByText(page, 'button', 'Open my ballot');
+    await waitForText(page, 'answered');
+
+    await clickByText(page, 'button', 'Exit voting');
+    await page.waitForSelector('.pin-entry', { timeout: 15000 });
+
+    const text = await page.evaluate(() => document.body.innerText);
+    expect(text).not.toContain('Submit my vote');
     await page.close();
   });
 
@@ -191,14 +199,13 @@ describe('the voter', () => {
     await enterPin(page, pins[0]!);
     await clickByText(page, 'button', 'Open my ballot');
     await waitForText(page, 'Elect the chair');
-    await clickByText(page, '.lobby-item', 'Elect the chair');
     await waitForText(page, 'Ann Meyer');
 
     // The chair closes it while this voter is still looking at the page.
     await organizer.rpc('close_all_gates', { p_ballot: ballotId });
 
-    await clickByText(page, '.choice', 'Ben Naidoo');
-    await clickByText(page, 'button', 'Submit my vote');
+    await clickWithin(page, '.card', 'Elect the chair', '.choice', 'Ben Naidoo');
+    await clickWithin(page, '.card', 'Elect the chair', 'button', 'Submit my vote');
     await waitForText(page, 'not open');
     await page.close();
   });
@@ -226,7 +233,7 @@ describe('the front page', () => {
       await clickByText(page, '.lobby-item', 'Browser Run');
     }
 
-    // Straight to the lobby: the PIN screen is never shown again.
+    // Straight to the questions: the PIN screen is never shown again.
     await waitForText(page, 'Adopt the minutes');
     expect(await page.$('.pin-entry')).toBeNull();
     await page.close();

@@ -66,17 +66,21 @@ only — and the answer carries only a ballot's title and whose it is.
 ## How a meeting runs
 
 ```
-        ┌──────────────────────── the voter's loop ────────────────────────┐
-        │                                                                  │
-   PIN ─┴─▶  LOBBY  ──(gate open)──▶  QUESTION  ──(submit)──▶  DONE  ──────┘
-             ▲    │
-             └────┘  reload
+   PIN ──▶ every open question, answerable where it stands ──▶ exit
+            ▲                                              │
+            └───────────────── reload ─────────────────────┘
 ```
 
-In **gated** mode the lobby lists only the questions whose gate the chair has
-opened, so the page in a voter's hand changes when the meeting moves on. In
-**open** mode every enabled question is listed at once and voters work at their
-own pace.
+Every question the chair has opened is answered in place, on one page. There
+used to be a list you tapped into and backed out of, which cost two taps and a
+page change per answer and hid from a voter how much was in front of them —
+expensive in a room where the chair is waiting on the slowest phone.
+
+In **gated** mode that page holds the questions whose gates are open, so what is
+in a voter's hand changes when the meeting moves on. In **open** mode it holds
+the whole ballot and voters work at their own pace. A large **Exit voting**
+button sits at the end — the last thing a voter wants, and the one thing they
+should not hit on the way past a question.
 
 The gate is re-checked in the database at the moment of the click, not when the
 page was drawn, so a stale lobby cannot slip a vote through a gate that has
@@ -88,6 +92,13 @@ The one exception is deleting a PIN, which takes its votes with it — a vote
 whose PIN no longer exists cannot be traced to anything, so keeping it is not
 keeping a record, it is keeping a number. `reset_token` is the way to void a
 PIN's votes and keep the trail.
+
+**Three ways to take a PIN out of circulation**, and they are not the same
+thing. *Disable* stops it voting again and leaves what it already cast standing
+and counted — so it still counts as one of the voters a question is waiting on,
+or disabling someone would let their vote stand for the room. *Reset* voids its
+votes and keeps the rows, so the log still reads. *Delete* removes the PIN and
+takes its votes with it.
 
 **One button runs the meeting.** `advance_ballot` closes what is open, opens
 what is next, and closes the ballot when there is no next — atomically, so there
@@ -156,6 +167,11 @@ Nothing vanishes quietly: the ballot's own page carries the countdown and a
 expiry forward but never past the cap, which is why `expires_at` is readable but
 not writable from a client. A ballot stops taking votes the moment it expires
 rather than whenever the purge next runs.
+
+**PINs print as slips.** The PINs tab renders one cut-out per active PIN —
+ballot title, the code, and a QR of the voting link — revealed by `@media print`
+rather than by opening a second document, so there is nothing to keep in step
+and no popup for a browser to block.
 
 `public.app_limits()` exposes the two quotas so a form can say "4 of 5
 organizations" without a constant in the client drifting from the database that

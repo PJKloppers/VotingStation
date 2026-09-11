@@ -210,10 +210,25 @@ export interface HighestXTally {
   options: CountedOption[];
 }
 
+interface QuestionResultBase {
+  id: string;
+  prompt: string;
+  description: string;
+  gate_open: boolean;
+  /** Distinct voters with a standing answer on this question. */
+  voted: number;
+  /**
+   * Who this question is waiting on: the active PINs, plus any PIN that has
+   * already answered it. A disabled voter's answer still counts in the tally,
+   * so it counts here too; one disabled before answering is not waited for.
+   */
+  expected: number;
+}
+
 export type QuestionResult =
-  | { id: string; type: 'yes_no'; prompt: string; description: string; gate_open: boolean; tally: YesNoTally }
-  | { id: string; type: 'highest_outright'; prompt: string; description: string; gate_open: boolean; tally: OutrightTally }
-  | { id: string; type: 'highest_x'; prompt: string; description: string; gate_open: boolean; tally: HighestXTally };
+  | (QuestionResultBase & { type: 'yes_no'; tally: YesNoTally })
+  | (QuestionResultBase & { type: 'highest_outright'; tally: OutrightTally })
+  | (QuestionResultBase & { type: 'highest_x'; tally: HighestXTally });
 
 export interface BallotResults {
   ok: true;
