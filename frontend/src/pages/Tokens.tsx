@@ -187,11 +187,9 @@ function PrintSheet({ ballotId, title, tokens }: {
         <div key={i} className={`print-page${i === sheets.length - 1 ? ' last' : ''}`}>
       {sheet.map((t) => (
         <div key={t.id} className="slip">
-          <div className="slip-title">{title}</div>
-          <div className="slip-pin">{t.pin}</div>
           {/* Black on white regardless of theme: a scanner wants dark modules
               on a light quiet zone, and paper is light either way. crispEdges
-              so 26mm of modules do not blur into each other. */}
+              so the modules do not blur into each other. */}
           {code ? (
             <svg className="slip-qr" shapeRendering="crispEdges"
                  viewBox={`0 0 ${code.size + QUIET * 2} ${code.size + QUIET * 2}`}
@@ -200,7 +198,11 @@ function PrintSheet({ ballotId, title, tokens }: {
               <path d={qrPath(code)} fill="#000" />
             </svg>
           ) : null}
-          <div className="slip-url">{url.replace(/^https?:\/\//, '')}</div>
+          <div className="slip-body">
+            <div className="slip-title">{title}</div>
+            <div className="slip-pin">{t.pin}</div>
+            <div className="slip-url">{url.replace(/^https?:\/\//, '')}</div>
+          </div>
         </div>
       ))}
         </div>

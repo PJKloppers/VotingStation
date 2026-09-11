@@ -171,8 +171,9 @@ expiry forward but never past the cap, which is why `expires_at` is readable but
 not writable from a client. A ballot stops taking votes the moment it expires
 rather than whenever the purge next runs.
 
-**PINs print as slips.** The PINs tab renders one cut-out per active PIN —
-ballot title, the code, and a QR of the voting link — revealed by `@media print`
+**PINs print as slips.** The PINs tab renders one cut-out per active PIN — a QR
+of the voting link down the left, and the ballot title, the code and the link
+beside it — revealed by `@media print`
 rather than by opening a second document, so there is nothing to keep in step
 and no popup for a browser to block. Eight to a page, two across and four down.
 Each group of eight is its own page box, `100vh` tall with four rows of
