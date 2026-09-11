@@ -250,6 +250,60 @@ test('the print sheet makes one slip per active PIN', async () => {
     await page.close();
   });
 
+test('eight slips to a page, on A4 and on Letter', async () => {
+    // The row height is what fixes this, and it is sized for the shorter of the
+    // two papers. Counting pages in a real PDF is the only way to know it holds.
+    if (process.env.HEADED === '1') return;   // page.pdf needs headless
+
+    const { data: user } = await organizer.auth.getUser();
+    const { data: org } = await organizer.from('organizations')
+      .select('id').eq('owner_id', user.user!.id).limit(1).single();
+    const { data: b } = await organizer.from('ballots').insert({
+      org_id: org!.id, slug: uniqueSlug('paper'), title: 'Paper check', status: 'draft',
+    }).select('id').single();
+    const paper = b!.id;
+
+    const minted = await organizer.rpc('issue_tokens', { p_ballot: paper, p_count: 9 });
+    const ninth = (minted.data as Array<{ pin: string }>)[8]!.pin;
+
+    const page = await signedInPage();
+    await page.goto(`${origin}/#/manage/${paper}`, { waitUntil: 'networkidle0' });
+    await clickByText(page, 'button', 'PINs');
+    await page.waitForSelector('table tbody tr', { timeout: 15000 });
+    await page.evaluate(() => { window.print = () => {}; });
+    await clickByText(page, 'button', 'Print slips');
+    await page.waitForSelector('.print-sheet .slip', { timeout: 15000 });
+
+    const pagesOf = async (format: 'A4' | 'Letter') => {
+      const pdf = await page.pdf({
+        format, printBackground: true,
+        margin: { top: 0, right: 0, bottom: 0, left: 0 },
+      });
+      return (Buffer.from(pdf).toString('latin1').match(/\/Type\s*\/Page[^s]/g) ?? []).length;
+    };
+
+    // Nine will not fit on one sheet.
+    expect(await pagesOf('A4')).toBe(2);
+    expect(await pagesOf('Letter')).toBe(2);
+
+    // Take one out of circulation; the sheet prints only the active ones.
+    await organizer.from('ballot_tokens')
+      .update({ status: 'disabled' }).eq('ballot_id', paper).eq('pin', ninth);
+    await page.reload({ waitUntil: 'networkidle0' });
+    await clickByText(page, 'button', 'PINs');
+    await page.waitForSelector('table tbody tr', { timeout: 15000 });
+    await page.evaluate(() => { window.print = () => {}; });
+    await clickByText(page, 'button', 'Print slips');
+    await page.waitForFunction(
+      () => document.querySelectorAll('.slip').length === 8, { timeout: 15000 });
+
+    expect(await pagesOf('A4')).toBe(1);
+    expect(await pagesOf('Letter')).toBe(1);
+
+    await page.close();
+    await organizer.from('ballots').delete().eq('id', paper);
+  });
+
   test('publishing it opens the ballot to voters', async () => {
     const page = await signedInPage();
     await page.goto(`${origin}/#/manage/${createdBallotId}`, { waitUntil: 'networkidle0' });
