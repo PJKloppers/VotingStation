@@ -89,10 +89,25 @@ a  { color: var(--accent); text-underline-offset: 3px; }
 .shell { min-height: 100vh; display: flex; flex-direction: column; }
 
 .topbar {
+  /* Sticky rather than fixed: it stays at the top of the page without the body
+     having to be padded by exactly its height, which is a number that changes
+     the moment the nav wraps on a narrow phone. */
+  position: sticky;
+  top: 0;
+  z-index: 30;
+
   display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
   padding: 14px 20px;
   border-bottom: 1px solid var(--rule);
   background: var(--surface);
+  /* Content scrolls underneath it, so it needs an edge of its own. */
+  box-shadow: 0 1px 3px rgb(22 24 29 / 0.06);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .topbar {
+    box-shadow: 0 1px 3px rgb(0 0 0 / 0.5);
+  }
 }
 .topbar .brand {
   display: flex; align-items: baseline; gap: 9px;

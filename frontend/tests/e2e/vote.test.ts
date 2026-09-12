@@ -368,3 +368,47 @@ async function countOn(page: Page, prompt: string): Promise<number> {
       .reduce((a, b) => a + b, 0);
   }, prompt);
 }
+
+describe('the header', () => {
+  test('stays at the top of the page while the ballot scrolls under it', async () => {
+    await organizer.rpc('set_gate', {
+      p_ballot: ballotId, p_type: 'yes_no', p_question: motionId, p_open: true, p_only: true,
+    });
+
+    const page = await newPage();
+    // Short enough that two questions are already more than one screen.
+    await page.setViewport({ width: 420, height: 380 });
+    await page.goto(`${origin}/#/vote/${ballotId}`, { waitUntil: 'networkidle0' });
+    await enterPin(page, pins[1]!);
+    await clickByText(page, 'button', 'Open my ballot');
+    await waitForText(page, 'answered');
+
+    const where = () => page.evaluate(() => ({
+      top: Math.round(document.querySelector('.topbar')!.getBoundingClientRect().top),
+      scrolled: Math.round(window.scrollY),
+    }));
+
+    // Entering a PIN already scrolls the page a little, so the claim is not
+    // "nothing has scrolled" -- it is that the header is at the top whatever has.
+    await page.evaluate(() => window.scrollTo(0, 0));
+    const before = await where();
+    expect(before.top).toBe(0);
+
+    await page.evaluate(() => window.scrollTo(0, 900));
+    await page.waitForFunction(() => window.scrollY > 100, { timeout: 5000 });
+
+    const after = await where();
+    expect(after.scrolled).toBeGreaterThan(100);   // the page really moved
+    expect(after.top).toBe(0);                     // and the header did not
+
+    // It is above the content going past it, not behind it.
+    const covered = await page.evaluate(() => {
+      const bar = document.querySelector('.topbar')!.getBoundingClientRect();
+      const at = document.elementFromPoint(bar.left + bar.width / 2, bar.top + bar.height / 2);
+      return at ? at.closest('.topbar') !== null : false;
+    });
+    expect(covered).toBe(true);
+
+    await page.close();
+  });
+});
