@@ -72,3 +72,41 @@ describe('reading a scanned code', () => {
     }
   });
 });
+
+describe('a code that carries its own PIN', () => {
+  test('the PIN comes back with the slugs', () => {
+    expect(readDestination(`${SITE}#/vote/demo-society/agm-2026?pin=531907`))
+      .toEqual({
+        kind: 'slugs', orgSlug: 'demo-society', ballotSlug: 'agm-2026', pin: '531907',
+      });
+  });
+
+  test('and with a uuid, for a slip already handed out', () => {
+    const id = '665306e5-d37f-4734-891a-0b42f9ee9ef9';
+    expect(readDestination(`${SITE}#/vote/${id}?pin=531907`))
+      .toEqual({ kind: 'ballot', ballotId: id, pin: '531907' });
+  });
+
+  test('without one, nothing is carried', () => {
+    const to = readDestination(`${SITE}#/vote/demo-society/agm-2026`)!;
+    expect('pin' in to && to.pin).toBeFalsy();
+  });
+
+  test('something that is not a PIN is ignored, not passed on', () => {
+    for (const bad of ['pin=abc', 'pin=', 'pin=12', 'pin=1234567890123', "pin=' or 1=1"]) {
+      const to = readDestination(`${SITE}#/vote/demo-society/agm-2026?${bad}`)!;
+      expect(to).toEqual({ kind: 'slugs', orgSlug: 'demo-society', ballotSlug: 'agm-2026' });
+    }
+  });
+
+  test('an organization link never carries one', () => {
+    expect(readDestination(`${SITE}#/o/demo-society?pin=531907`))
+      .toEqual({ kind: 'organization', orgSlug: 'demo-society' });
+  });
+
+  test('the route keeps it, and reading that back gives the same thing', () => {
+    const to = readDestination(`${SITE}#/vote/demo-society/agm-2026?pin=531907`)!;
+    expect(routeFor(to)).toBe('/vote/demo-society/agm-2026?pin=531907');
+    expect(readDestination(routeFor(to))).toEqual(to);
+  });
+});

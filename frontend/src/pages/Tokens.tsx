@@ -4,7 +4,10 @@ import * as api from '../lib/api';
 import type { TokenReport, TokenRow } from '../lib/types';
 import { encodeQr, QUIET, qrPath, type QrCode } from '../lib/qr';
 import { href } from '../lib/router';
-import { Banner, Card, Field, Pill, Spinner } from '../components/ui';
+import { Banner, Card, Check, Field, Pill, Spinner } from '../components/ui';
+
+/** Slips to a printed page. The stylesheet lays out this many rows. */
+const PER_PAGE = 16;
 
 export function Tokens({ ballotId, ballotTitle }: { ballotId: string; ballotTitle: string }) {
   const [report, setReport] = useState<TokenReport | null>(null);
@@ -15,6 +18,9 @@ export function Tokens({ ballotId, ballotTitle }: { ballotId: string; ballotTitl
   const [printing, setPrinting] = useState(false);
   const [mark, setMark] = useState<string | null>(null);
   const [slugs, setSlugs] = useState<{ org: string; ballot: string } | null>(null);
+  // Off every time the page loads, deliberately: it makes the printed code the
+  // credential, and that is not a decision to leave switched on by accident.
+  const [embedPin, setEmbedPin] = useState(false);
 
   // The slip carries the readable link, so the page needs the pair of slugs.
   useEffect(() => {
@@ -143,6 +149,13 @@ export function Tokens({ ballotId, ballotTitle }: { ballotId: string; ballotTitl
           </button>
         </div>
 
+        <Check
+          label="Put the PIN in the code as well"
+          checked={embedPin}
+          onChange={setEmbedPin}
+          help="Scanning the slip opens the ballot and signs that voter straight in. It also makes the printed code the vote: anyone who photographs the slip can use it. Off unless you turn it on."
+        />
+
         <div className="scroll-x" style={{ marginTop: 12 }}>
           <table>
             <thead>
@@ -188,7 +201,8 @@ export function Tokens({ ballotId, ballotTitle }: { ballotId: string; ballotTitl
 
       {printing
         ? <PrintSheet ballotId={ballotId} title={ballotTitle}
-                      tokens={report.tokens} mark={mark} slugs={slugs} />
+                      tokens={report.tokens} mark={mark} slugs={slugs}
+                      embedPin={embedPin} />
         : null}
     </div>
   );
@@ -233,33 +247,44 @@ function QrWithMark({ code, mark }: { code: QrCode; mark: string | null }) {
   );
 }
 
-function PrintSheet({ ballotId, title, tokens, mark, slugs }: {
+function PrintSheet({ ballotId, title, tokens, mark, slugs, embedPin }: {
   ballotId: string; title: string; tokens: TokenRow[]; mark: string | null;
   slugs: { org: string; ballot: string } | null;
+  embedPin: boolean;
 }) {
   // The readable form, because a slip is read by a person and typed by one.
   // The uuid is the fallback for a draft, whose slugs are not resolvable yet.
   const path = slugs ? `/vote/${slugs.org}/${slugs.ballot}` : `/vote/${ballotId}`;
-  const url = `${window.location.origin}${window.location.pathname}${href(path)}`;
-  const code = encodeQr(url);
+  const base = `${window.location.origin}${window.location.pathname}${href(path)}`;
   const live = tokens.filter((t) => t.status === 'active');
 
-  // Eight to a sheet, decided here rather than left to whatever the paper and
+  /*
+   * With the PIN in it, every slip's code is different, so each is encoded on
+   * its own. Without it they are all the same code, and encoding it once for
+   * two thousand slips is the difference between instant and not.
+   */
+  const shared = embedPin ? null : encodeQr(base);
+
+  // Sixteen to a sheet, decided here rather than left to whatever the paper and
   // the print dialog's scale setting happen to allow.
   const sheets: TokenRow[][] = [];
-  for (let i = 0; i < live.length; i += 8) sheets.push(live.slice(i, i + 8));
+  for (let i = 0; i < live.length; i += PER_PAGE) sheets.push(live.slice(i, i + PER_PAGE));
 
   // The code's viewBox includes its quiet zone -- four blank modules a side --
   // so the dark part fills only this fraction of the box it is given. The mark
   // is scaled to match, or the two are the same box at visibly different sizes.
-  const inkRatio = code ? code.size / (code.size + QUIET * 2) : 1;
+  const gauge = shared ?? encodeQr(`${base}?pin=000000`);
+  const inkRatio = gauge ? gauge.size / (gauge.size + QUIET * 2) : 1;
 
   return (
     <div className="print-sheet" aria-hidden="true"
          style={{ ['--mark-scale' as string]: String(inkRatio) }}>
       {sheets.map((sheet, i) => (
         <div key={i} className={`print-page${i === sheets.length - 1 ? ' last' : ''}`}>
-      {sheet.map((t) => (
+      {sheet.map((t) => {
+        const url = embedPin ? `${base}?pin=${t.pin}` : base;
+        const code = shared ?? encodeQr(url);
+        return (
         <div key={t.id} className="slip">
           {/* Black on white regardless of theme: a scanner wants dark modules
               on a light quiet zone, and paper is light either way. crispEdges
@@ -273,7 +298,8 @@ function PrintSheet({ ballotId, title, tokens, mark, slugs }: {
           {/* The mark balances the code across the slip, at the same size. */}
           {mark ? <img className="slip-mark" src={mark} alt="" /> : null}
         </div>
-      ))}
+        );
+      })}
         </div>
       ))}
     </div>

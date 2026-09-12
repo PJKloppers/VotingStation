@@ -27,11 +27,11 @@ import type {
 import { Banner, Card, Empty, Pill, Rail, Spinner } from '../components/ui';
 import { QuestionTally } from './Results';
 
-export function Vote(address: Address) {
+export function Vote({ pin, ...address }: Address & { pin?: string }) {
   const { ballotId, pending } = useBallotId(address);
   if (pending) return <main className="narrow"><Spinner label="Finding the ballot" /></main>;
   if (!ballotId) return <NoSuchBallot />;
-  return <Ballot ballotId={ballotId} />;
+  return <Ballot ballotId={ballotId} carried={pin} />;
 }
 
 function NoSuchBallot() {
@@ -46,7 +46,7 @@ function NoSuchBallot() {
   );
 }
 
-function Ballot({ ballotId }: { ballotId: string }) {
+function Ballot({ ballotId, carried }: { ballotId: string; carried?: string }) {
   const [ballot, setBallot] = useState<Ballot | null>(null);
   const [logo, setLogo] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -90,6 +90,23 @@ function Ballot({ ballotId }: { ballotId: string }) {
       setBusy(false);
     }
   }, [apply, ballotId, pin]);
+
+  /*
+   * A slip whose code carried the voter's own PIN.
+   *
+   * The organizer has to turn that on, and it means the printed code is the
+   * credential -- so the PIN is used once and then taken out of the address
+   * bar, rather than left in the history of a shared phone.
+   */
+  useEffect(() => {
+    if (!carried) return;
+    setPin(carried);
+    void refresh(carried);
+    const clean = window.location.hash.split('?')[0] ?? '#/';
+    window.history.replaceState(null, '', clean);
+    // Once, for the code this page was opened with.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ballotId, carried]);
 
   // Optional auto-reload. Left at 0 for a big meeting: two hundred phones
   // polling every ten seconds is twenty calls a second.

@@ -214,11 +214,18 @@ by one; `resolve_ballot` turns that pair back into the ballot, since
 organizations are owner-only and a voter cannot do that join. Both forms of the
 link work — revealed by `@media print`
 rather than by opening a second document, so there is nothing to keep in step
-and no popup for a browser to block. Eight to a page, two across and four down.
-Each group of eight is its own page box, `100vh` tall with four rows of
-`minmax(0, 1fr)` — so a row is a quarter of the page by construction, whatever
-the paper and whatever the print dialog's scale. A test counts the pages of real
-PDFs across nine combinations of paper, margin and scale.
+and no popup for a browser to block. Sixteen to a page, two across and
+eight down. Each group of sixteen is its own page box, `100vh` tall with eight
+rows of `minmax(0, 1fr)` — so a row is an eighth of the page by construction,
+whatever the paper and whatever the print dialog's scale. A test counts the
+pages of real PDFs across nine combinations of paper, margin and scale.
+
+**The code can carry the PIN**, and is off unless an organizer turns it on for
+that print. With it on, each slip's code is its own link — `?pin=…` — and
+scanning it opens the ballot already signed in; the PIN is used once and taken
+straight back out of the address bar, so it does not sit in the history of a
+shared phone. It is off by default because it makes the printed code the
+credential: anyone who photographs the slip can vote with it.
 
 `public.app_limits()` exposes the two quotas so a form can say "4 of 5
 organizations" without a constant in the client drifting from the database that

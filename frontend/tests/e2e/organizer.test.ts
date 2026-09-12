@@ -254,11 +254,11 @@ test('the print sheet makes one slip per active PIN', async () => {
     await page.close();
   });
 
-test('eight slips to a page, whatever the paper and the scale', async () => {
-    // The first version of this fixed the row height in millimetres and only
-    // measured A4 and Letter at a zero margin, which is not what a print dialog
-    // does. At 110% scale -- one click in Chrome's print preview -- the fourth
-    // row stopped fitting and every page quietly dropped to six.
+test('sixteen slips to a page, whatever the paper and the scale', async () => {
+    // An earlier version fixed the row height in millimetres and only measured
+    // A4 and Letter at a zero margin, which is not what a print dialog does. At
+    // 110% scale -- one click in Chrome's print preview -- the last row stopped
+    // fitting and every page quietly dropped a pair.
     if (process.env.HEADED === '1') return;   // page.pdf needs headless
 
     const { data: user } = await organizer.auth.getUser();
@@ -269,8 +269,8 @@ test('eight slips to a page, whatever the paper and the scale', async () => {
     }).select('id').single();
     const paper = b!.id;
 
-    const minted = await organizer.rpc('issue_tokens', { p_ballot: paper, p_count: 24 });
-    const last = (minted.data as Array<{ pin: string }>)[23]!.pin;
+    const minted = await organizer.rpc('issue_tokens', { p_ballot: paper, p_count: 32 });
+    const last = (minted.data as Array<{ pin: string }>)[31]!.pin;
 
     const page = await signedInPage();
     await page.goto(`${origin}/#/manage/${paper}`, { waitUntil: 'networkidle0' });
@@ -298,9 +298,12 @@ test('eight slips to a page, whatever the paper and the scale', async () => {
       ['A5',                     { format: 'A5', margin: margin('0.4in') }],
     ];
 
-    // 24 slips is three sheets of eight, on every one of them.
+    // Sixteen to a sheet: 32 slips is two, on every one of these.
+    expect(await page.$$eval('.print-page', (n) => n.length)).toBe(2);
+    expect(await page.$$eval('.print-page:first-child .slip', (n) => n.length)).toBe(16);
+
     for (const [name, opts] of settings) {
-      expect(`${name}: ${await pagesOf(opts)}`).toBe(`${name}: 3`);
+      expect(`${name}: ${await pagesOf(opts)}`).toBe(`${name}: 2`);
     }
 
     // Take one out of circulation: the sheet prints only the active ones.
@@ -312,8 +315,8 @@ test('eight slips to a page, whatever the paper and the scale', async () => {
     await page.evaluate(() => { window.print = () => {}; });
     await clickByText(page, 'button', 'Print slips');
     await page.waitForFunction(
-      () => document.querySelectorAll('.slip').length === 23, { timeout: 15000 });
-    expect(await pagesOf({ format: 'A4', margin: margin('0.4in') })).toBe(3);
+      () => document.querySelectorAll('.slip').length === 31, { timeout: 15000 });
+    expect(await pagesOf({ format: 'A4', margin: margin('0.4in') })).toBe(2);
 
     await page.close();
     await organizer.from('ballots').delete().eq('id', paper);
@@ -684,6 +687,128 @@ describe('the printed link', () => {
     await page.goto(`${origin}/#/vote/${orgSlug}/no-such-ballot`, { waitUntil: 'networkidle0' });
     await waitForText(page, 'not point at a published ballot');
     expect(await page.$('.pin-entry')).toBeNull();
+    await page.close();
+  });
+});
+
+describe('putting the PIN in the code', () => {
+  // Off by default, because it makes the printed code the credential.
+  let scratch = '';
+  let orgSlug = '';
+  let ballotSlug = '';
+  let pins: string[] = [];
+
+  beforeAll(async () => {
+    const { data: user } = await organizer.auth.getUser();
+    const { data: org } = await organizer.from('organizations')
+      .select('id, slug').eq('owner_id', user.user!.id).limit(1).single();
+    orgSlug = org!.slug;
+    ballotSlug = uniqueSlug('embed');
+
+    const { data: b } = await organizer.from('ballots').insert({
+      org_id: org!.id, slug: ballotSlug, title: 'Embedded Ballot', status: 'live',
+    }).select('id').single();
+    scratch = b!.id;
+
+    const { data: q } = await organizer.from('questions_yes_no').insert({
+      ballot_id: scratch, prompt: 'Carry the motion', sort_order: 1,
+    }).select('id').single();
+    await organizer.rpc('set_gate', {
+      p_ballot: scratch, p_type: 'yes_no', p_question: q!.id, p_open: true, p_only: true,
+    });
+
+    const minted = await organizer.rpc('issue_tokens', { p_ballot: scratch, p_count: 3 });
+    pins = (minted.data as Array<{ pin: string }>).map((t) => t.pin);
+  });
+
+  afterAll(async () => {
+    if (scratch) await organizer.from('ballots').delete().eq('id', scratch);
+  });
+
+  const printed = async () => {
+    const page = await signedInPage();
+    await page.goto(`${origin}/#/manage/${scratch}`, { waitUntil: 'networkidle0' });
+    await clickByText(page, 'button', 'PINs');
+    await page.waitForSelector('table tbody tr', { timeout: 15000 });
+    await page.evaluate(() => { window.print = () => {}; });
+    return page;
+  };
+
+  test('is off unless it is switched on', async () => {
+    const page = await printed();
+    const ticked = await page.$$eval('input[type="checkbox"]',
+      (boxes) => boxes.map((b) => (b as HTMLInputElement).checked));
+    expect(ticked.some((t) => t)).toBe(false);
+
+    await clickByText(page, 'button', 'Print slips');
+    await page.waitForSelector('.slip-url', { timeout: 15000 });
+
+    // Every slip carries the same link, and none of them a PIN.
+    const links = await page.$$eval('.slip-url', (n) => n.map((x) => x.textContent ?? ''));
+    expect(new Set(links).size).toBe(1);
+    for (const l of links) expect(l).not.toContain('pin=');
+    await page.close();
+  });
+
+  test('switched on, every slip carries its own', async () => {
+    const page = await printed();
+    await clickByText(page, 'label', 'Put the PIN in the code as well');
+    await clickByText(page, 'button', 'Print slips');
+    await page.waitForFunction(
+      () => document.querySelectorAll('.slip-url').length === 3, { timeout: 15000 });
+
+    const links = await page.$$eval('.slip-url', (n) => n.map((x) => x.textContent ?? ''));
+    expect(new Set(links).size).toBe(3);            // each one different
+    for (const pin of pins) {
+      expect(links.some((l) => l.includes(`pin=${pin}`))).toBe(true);
+    }
+    await page.close();
+  });
+
+  test('and the code on it decodes to that voter\'s own link', async () => {
+    const page = await printed();
+    await page.setViewport({ width: 900, height: 900, deviceScaleFactor: 3 });
+    await clickByText(page, 'label', 'Put the PIN in the code as well');
+    await clickByText(page, 'button', 'Print slips');
+    await page.waitForFunction(
+      () => document.querySelectorAll('.slip-qr').length === 3, { timeout: 15000 });
+    await page.emulateMediaType('print');
+
+    const decoded: string[] = [];
+    for (const qr of await page.$$('.slip-qr')) {
+      const png = PNG.sync.read(Buffer.from(await qr.screenshot({ encoding: 'binary' }) as Buffer));
+      const found = jsQR(new Uint8ClampedArray(png.data), png.width, png.height);
+      decoded.push(found?.data ?? '(nothing)');
+    }
+
+    for (const pin of pins) {
+      expect(decoded.some((d) =>
+        d === `${origin}/#/vote/${orgSlug}/${ballotSlug}?pin=${pin}`)).toBe(true);
+    }
+    await page.emulateMediaType(undefined);
+    await page.close();
+  });
+
+  test('following such a link opens the ballot already signed in', async () => {
+    const page = await browser.newPage();
+    await page.setViewport({ width: 420, height: 900 });
+    await page.goto(`${origin}/#/vote/${orgSlug}/${ballotSlug}?pin=${pins[0]}`,
+                    { waitUntil: 'networkidle0' });
+
+    // Straight past the PIN screen and onto the question.
+    await waitForText(page, 'Carry the motion');
+    expect(await page.$('.pin-entry')).toBeNull();
+
+    // And the PIN is not left in the address bar of a shared phone.
+    expect(await page.evaluate(() => window.location.hash)).not.toContain('pin=');
+    await page.close();
+  });
+
+  test('a link carrying a PIN that is not on the ballot is refused', async () => {
+    const page = await browser.newPage();
+    await page.goto(`${origin}/#/vote/${orgSlug}/${ballotSlug}?pin=000000`,
+                    { waitUntil: 'networkidle0' });
+    await waitForText(page, 'not valid');
     await page.close();
   });
 });

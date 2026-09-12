@@ -10,8 +10,8 @@
 
 /** Where a scanned or typed link should take the reader. */
 export type Destination =
-  | { kind: 'ballot'; ballotId: string }
-  | { kind: 'slugs'; orgSlug: string; ballotSlug: string }
+  | { kind: 'ballot'; ballotId: string; pin?: string }
+  | { kind: 'slugs'; orgSlug: string; ballotSlug: string; pin?: string }
   | { kind: 'organization'; orgSlug: string };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -46,8 +46,14 @@ export function readDestination(text: string): Destination | null {
     path = trimmed.startsWith('#') ? trimmed.slice(1) : trimmed;
   }
 
-  const segments = (path.split('?')[0] ?? '').split('/').filter(Boolean);
+  const [beforeQuery = '', query = ''] = path.split('?');
+  const segments = beforeQuery.split('/').filter(Boolean);
   if (segments.length === 0) return null;
+
+  // A slip may carry its own code, if the organizer chose to print it that way.
+  const carried = new URLSearchParams(query).get('pin');
+  const pin = carried && /^[0-9]{4,12}$/.test(carried.trim())
+    ? carried.trim() : undefined;
 
   const head = segments[0]!.toLowerCase();
   const prefixed = PREFIXES.includes(head);
@@ -57,20 +63,29 @@ export function readDestination(text: string): Destination | null {
   const [first, second] = rest;
   if (!first) return null;
 
-  if (UUID.test(first)) return { kind: 'ballot', ballotId: first.toLowerCase() };
+  if (UUID.test(first)) {
+    return { kind: 'ballot', ballotId: first.toLowerCase(), ...(pin ? { pin } : {}) };
+  }
 
   if (second) {
     return SLUG.test(first) && SLUG.test(second)
-      ? { kind: 'slugs', orgSlug: first.toLowerCase(), ballotSlug: second.toLowerCase() }
+      ? {
+          kind: 'slugs',
+          orgSlug: first.toLowerCase(),
+          ballotSlug: second.toLowerCase(),
+          ...(pin ? { pin } : {}),
+        }
       : null;
   }
 
   return SLUG.test(first) ? { kind: 'organization', orgSlug: first.toLowerCase() } : null;
 }
 
-/** The route for a destination. */
+/** The route for a destination, code and all. */
 export function routeFor(to: Destination): string {
-  if (to.kind === 'ballot') return `/vote/${to.ballotId}`;
-  if (to.kind === 'slugs') return `/vote/${to.orgSlug}/${to.ballotSlug}`;
-  return `/o/${to.orgSlug}`;
+  if (to.kind === 'organization') return `/o/${to.orgSlug}`;
+  const path = to.kind === 'ballot'
+    ? `/vote/${to.ballotId}`
+    : `/vote/${to.orgSlug}/${to.ballotSlug}`;
+  return to.pin ? `${path}?pin=${to.pin}` : path;
 }

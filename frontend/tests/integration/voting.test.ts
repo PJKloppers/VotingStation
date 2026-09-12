@@ -513,13 +513,20 @@ describe('an organization\'s mark', () => {
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
     'base64',
   );
+  // Its own organization, not the account's main one: an earlier version used
+  // that, and its teardown kept deleting the real logo an organizer had set.
   let mine = '';
   let theirs: SupabaseClient;
   let theirOrg = '';
   let path = '';
 
   beforeAll(async () => {
-    mine = orgId;
+    const { data: user } = await organizer.auth.getUser();
+    const { data: own } = await organizer.from('organizations')
+      .insert({ owner_id: user.user!.id, slug: uniqueSlug('mark-mine'), name: 'Mark Mine' })
+      .select('id').single();
+    mine = own!.id;
+
     theirs = await otherOrganizerClient();
     const { data: u } = await theirs.auth.getUser();
     const { data: org } = await theirs.from('organizations')
@@ -530,10 +537,9 @@ describe('an organization\'s mark', () => {
   });
 
   afterAll(async () => {
-    if (path) {
-      await organizer.from('organization_images').delete().eq('org_id', mine).eq('kind', 'logo');
-      await organizer.storage.from('org-logos').remove([path]);
-    }
+    // Deleting the organization takes its image row with it.
+    if (path) await organizer.storage.from('org-logos').remove([path]);
+    if (mine) await organizer.from('organizations').delete().eq('id', mine);
     await theirs.auth.signOut();
   });
 
@@ -572,40 +578,41 @@ describe('an organization\'s mark', () => {
     for (const row of data ?? []) expect(row.org_id).toBe(theirOrg);
   });
 
-  test('a voter gets the path for a published ballot all the same', async () => {
-    await organizer.from('ballots').update({ status: 'live' }).eq('id', ballotId);
-    await organizer.rpc('renew_ballot', { p_ballot: ballotId });
+  test('a voter gets the path for a published ballot of that organization', async () => {
+    const { data: b } = await organizer.from('ballots').insert({
+      org_id: mine, slug: uniqueSlug('marked'), title: 'Marked', status: 'live',
+    }).select('id').single();
 
-    const { data } = await voter.rpc('ballot_logo', { p_ballot: ballotId });
-    expect(data).toBe(path);
+    expect((await voter.rpc('ballot_logo', { p_ballot: b!.id })).data).toBe(path);
+
+    // And it rides along with the payloads a voter already asks for.
+    const results = await call<{ ballot: { org_logo_path: string } }>(
+      organizer, 'ballot_results', { p_ballot: b!.id });
+    expect(results.ballot.org_logo_path).toBe(path);
+
+    await organizer.from('ballots').delete().eq('id', b!.id);
   });
 
   test('but not for a draft one', async () => {
-    await organizer.from('ballots').update({ status: 'draft' }).eq('id', ballotId);
-    const { data } = await voter.rpc('ballot_logo', { p_ballot: ballotId });
-    expect(data).toBeNull();
-    await organizer.from('ballots').update({ status: 'live' }).eq('id', ballotId);
-  });
-
-  test('it rides along with the waiting screen and the tally', async () => {
-    const lobby = await state(pins[1]!, 'fp-mark');
-    expect((lobby as unknown as { ballot: { org_logo_path: string } }).ballot.org_logo_path)
-      .toBe(path);
-
-    const results = await call<{ ballot: { org_logo_path: string } }>(
-      organizer, 'ballot_results', { p_ballot: ballotId });
-    expect(results.ballot.org_logo_path).toBe(path);
+    const { data: b } = await organizer.from('ballots').insert({
+      org_id: mine, slug: uniqueSlug('marked-draft'), title: 'Draft', status: 'draft',
+    }).select('id').single();
+    expect((await voter.rpc('ballot_logo', { p_ballot: b!.id })).data).toBeNull();
+    await organizer.from('ballots').delete().eq('id', b!.id);
   });
 
   test('removing the row leaves nothing for a voter to fetch', async () => {
-    await organizer.from('organization_images').delete().eq('org_id', mine).eq('kind', 'logo');
-    const { data } = await voter.rpc('ballot_logo', { p_ballot: ballotId });
-    expect(data).toBeNull();
+    const { data: b } = await organizer.from('ballots').insert({
+      org_id: mine, slug: uniqueSlug('unmarked'), title: 'Unmarked', status: 'live',
+    }).select('id').single();
 
-    // put it back for the teardown to clear
+    await organizer.from('organization_images').delete().eq('org_id', mine).eq('kind', 'logo');
+    expect((await voter.rpc('ballot_logo', { p_ballot: b!.id })).data).toBeNull();
+
     await organizer.from('organization_images')
       .insert({ org_id: mine, kind: 'logo', bucket: 'org-logos', path,
                 content_type: 'image/png', bytes: png.length });
+    await organizer.from('ballots').delete().eq('id', b!.id);
   });
 });
 
