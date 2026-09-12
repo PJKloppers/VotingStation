@@ -609,6 +609,87 @@ describe('an organization\'s mark', () => {
   });
 });
 
+describe('reaching a ballot by its slugs', () => {
+  // Printed slips carry `/vote/<org>/<ballot>` because a person has to read it.
+  // Organizations are owner-only, so a voter cannot do that join themselves --
+  // resolve_ballot is the one thing that may.
+  let orgSlug = '';
+  let ballotSlug = '';
+
+  beforeAll(async () => {
+    const { data: org } = await organizer.from('organizations')
+      .select('slug').eq('id', orgId).single();
+    orgSlug = org!.slug;
+    const { data: b } = await organizer.from('ballots')
+      .select('slug').eq('id', ballotId).single();
+    ballotSlug = b!.slug;
+    await organizer.from('ballots').update({ status: 'live' }).eq('id', ballotId);
+    await organizer.rpc('renew_ballot', { p_ballot: ballotId });
+  });
+
+  test('a voter with no account resolves the pair to the ballot', async () => {
+    const { data } = await voter.rpc('resolve_ballot', {
+      p_org: orgSlug, p_ballot: ballotSlug,
+    });
+    expect(data).toBe(ballotId);
+  });
+
+  test('case and stray spacing do not matter', async () => {
+    const { data } = await voter.rpc('resolve_ballot', {
+      p_org: `  ${orgSlug.toUpperCase()} `, p_ballot: ` ${ballotSlug.toUpperCase()}`,
+    });
+    expect(data).toBe(ballotId);
+  });
+
+  test('the wrong organization does not find it', async () => {
+    const { data } = await voter.rpc('resolve_ballot', {
+      p_org: 'no-such-org', p_ballot: ballotSlug,
+    });
+    expect(data).toBeNull();
+  });
+
+  test('a draft is not resolvable by a voter, but is by its owner', async () => {
+    await organizer.from('ballots').update({ status: 'draft' }).eq('id', ballotId);
+
+    expect((await voter.rpc('resolve_ballot', { p_org: orgSlug, p_ballot: ballotSlug })).data)
+      .toBeNull();
+    expect((await organizer.rpc('resolve_ballot', { p_org: orgSlug, p_ballot: ballotSlug })).data)
+      .toBe(ballotId);
+
+    await organizer.from('ballots').update({ status: 'live' }).eq('id', ballotId);
+  });
+
+  test('and the slugs come back for building the link', async () => {
+    const { data } = await voter.rpc('ballot_slugs', { p_ballot: ballotId });
+    expect(data).toEqual({ org: orgSlug, ballot: ballotSlug });
+  });
+
+  test('a draft ballot does not hand out its slugs', async () => {
+    await organizer.from('ballots').update({ status: 'draft' }).eq('id', ballotId);
+    expect((await voter.rpc('ballot_slugs', { p_ballot: ballotId })).data).toBeNull();
+    await organizer.from('ballots').update({ status: 'live' }).eq('id', ballotId);
+  });
+
+  test('a PIN is unique within a ballot, so the same digits may exist elsewhere', async () => {
+    // This is what lets far more than a million codes be issued overall: a code
+    // only has to be unique where it is used, now that a voter arrives at the
+    // ballot before entering one.
+    const { data: other } = await organizer.from('ballots').insert({
+      org_id: orgId, slug: uniqueSlug('twin2'), title: 'Twin again', status: 'live',
+    }).select('id').single();
+
+    const { error } = await organizer.from('ballot_tokens')
+      .insert({ ballot_id: other!.id, pin: pins[0]! });
+    expect(error).toBeNull();
+
+    const { error: clash } = await organizer.from('ballot_tokens')
+      .insert({ ballot_id: other!.id, pin: pins[0]! });
+    expect(clash).not.toBeNull();     // but not twice on the same ballot
+
+    await organizer.from('ballots').delete().eq('id', other!.id);
+  });
+});
+
 describe('a ballot has a lifetime', () => {
   test('it is born with thirty days on the clock', async () => {
     const { data } = await organizer.from('ballots')

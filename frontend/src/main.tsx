@@ -24,9 +24,16 @@ function App() {
       case undefined:
         return <Home />;
       case 'vote':
-        return first ? <Vote ballotId={first} /> : <Home />;
+        if (!first) return <Home />;
+        // Either form: the uuid, or the pair of slugs a printed slip carries.
+        return second
+          ? <Vote orgSlug={first} ballotSlug={second} />
+          : <Vote ballotId={first} />;
       case 'results':
-        return first ? <Results ballotId={first} /> : <Home />;
+        if (!first) return <Home />;
+        return second
+          ? <Results orgSlug={first} ballotSlug={second} />
+          : <Results ballotId={first} />;
       case 'signin':
         return <SignIn />;
       case 'admin':
@@ -50,9 +57,6 @@ function App() {
         );
     }
   })();
-
-  // `second` is reserved for the org/ballot slug form of a voting link.
-  void second;
 
   return (
     <div className="shell">

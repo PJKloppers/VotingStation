@@ -706,7 +706,7 @@ button.share-copy[data-state="copied"]:hover {
   .slip {
     /* A cut line, and enough room that scissors are forgiving. */
     border: 1px dashed #999;
-    padding: 3mm 4mm;
+    padding: 3mm;
     /* The code beside the words rather than above them: a slip is far wider
        than it is tall, so stacking wasted the width and squeezed the QR into
        whatever height was left. Side by side, the code gets a column of its
@@ -714,7 +714,7 @@ button.share-copy[data-state="copied"]:hover {
     display: flex;
     flex-direction: row;
     align-items: center;
-    gap: 4mm;
+    gap: 3mm;
     text-align: left;
     overflow: hidden;
     break-inside: avoid;
@@ -728,9 +728,9 @@ button.share-copy[data-state="copied"]:hover {
        on a tall one. Height alone let the code eat the column the PIN needed
        and pushed the digits off the edge. */
     flex: 0 0 auto;
-    height: 88%;
+    height: 86%;
     width: auto;
-    max-width: 42%;
+    max-width: 27%;
     aspect-ratio: 1 / 1;
     display: block;
   }
@@ -740,12 +740,24 @@ button.share-copy[data-state="copied"]:hover {
   .slip-title {
     font-family: var(--serif); font-size: 9.5pt; font-weight: 600;
     line-height: 1.2; margin-bottom: 1.5mm;
-    display: flex; align-items: center; gap: 2mm;
   }
-  .slip-mark { flex: none; width: 6mm; height: 6mm; object-fit: contain; }
+
+  /* The mark answers the code across the slip, on the same bounds, so the two
+     read as a pair with the words between them. */
+  .slip-mark {
+    flex: 0 0 auto;
+    height: 86%;
+    width: auto;
+    /* The code reserves a quiet zone inside its own box; the mark does not, so
+       it is scaled by the same fraction to end up looking the same size. */
+    max-width: calc(27% * var(--mark-scale, 1));
+    aspect-ratio: 1 / 1;
+    object-fit: contain;
+    display: block;
+  }
   .slip-pin {
-    font-family: var(--mono); font-size: 18pt; font-weight: 700;
-    letter-spacing: 0.12em; line-height: 1.1;
+    font-family: var(--mono); font-size: 16pt; font-weight: 700;
+    letter-spacing: 0.08em; line-height: 1.1;
     margin-bottom: 1.5mm;
   }
   .slip-url { font-size: 6pt; color: #333; word-break: break-all; line-height: 1.3; }

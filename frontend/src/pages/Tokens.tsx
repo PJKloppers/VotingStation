@@ -14,6 +14,16 @@ export function Tokens({ ballotId, ballotTitle }: { ballotId: string; ballotTitl
   const [busy, setBusy] = useState(false);
   const [printing, setPrinting] = useState(false);
   const [mark, setMark] = useState<string | null>(null);
+  const [slugs, setSlugs] = useState<{ org: string; ballot: string } | null>(null);
+
+  // The slip carries the readable link, so the page needs the pair of slugs.
+  useEffect(() => {
+    let live = true;
+    api.ballotSlugs(ballotId)
+      .then((s) => { if (live) setSlugs(s); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [ballotId]);
 
   // Inlined as a data URI rather than left as a URL: window.print() does not
   // wait for a network image, and a sheet that prints with a hole in every QR
@@ -178,7 +188,7 @@ export function Tokens({ ballotId, ballotTitle }: { ballotId: string; ballotTitl
 
       {printing
         ? <PrintSheet ballotId={ballotId} title={ballotTitle}
-                      tokens={report.tokens} mark={mark} />
+                      tokens={report.tokens} mark={mark} slugs={slugs} />
         : null}
     </div>
   );
@@ -223,10 +233,14 @@ function QrWithMark({ code, mark }: { code: QrCode; mark: string | null }) {
   );
 }
 
-function PrintSheet({ ballotId, title, tokens, mark }: {
+function PrintSheet({ ballotId, title, tokens, mark, slugs }: {
   ballotId: string; title: string; tokens: TokenRow[]; mark: string | null;
+  slugs: { org: string; ballot: string } | null;
 }) {
-  const url = `${window.location.origin}${window.location.pathname}${href(`/vote/${ballotId}`)}`;
+  // The readable form, because a slip is read by a person and typed by one.
+  // The uuid is the fallback for a draft, whose slugs are not resolvable yet.
+  const path = slugs ? `/vote/${slugs.org}/${slugs.ballot}` : `/vote/${ballotId}`;
+  const url = `${window.location.origin}${window.location.pathname}${href(path)}`;
   const code = encodeQr(url);
   const live = tokens.filter((t) => t.status === 'active');
 
@@ -235,8 +249,14 @@ function PrintSheet({ ballotId, title, tokens, mark }: {
   const sheets: TokenRow[][] = [];
   for (let i = 0; i < live.length; i += 8) sheets.push(live.slice(i, i + 8));
 
+  // The code's viewBox includes its quiet zone -- four blank modules a side --
+  // so the dark part fills only this fraction of the box it is given. The mark
+  // is scaled to match, or the two are the same box at visibly different sizes.
+  const inkRatio = code ? code.size / (code.size + QUIET * 2) : 1;
+
   return (
-    <div className="print-sheet" aria-hidden="true">
+    <div className="print-sheet" aria-hidden="true"
+         style={{ ['--mark-scale' as string]: String(inkRatio) }}>
       {sheets.map((sheet, i) => (
         <div key={i} className={`print-page${i === sheets.length - 1 ? ' last' : ''}`}>
       {sheet.map((t) => (
@@ -246,13 +266,12 @@ function PrintSheet({ ballotId, title, tokens, mark }: {
               so the modules do not blur into each other. */}
           {code ? <QrWithMark code={code} mark={mark} /> : null}
           <div className="slip-body">
-            <div className="slip-title">
-              {mark ? <img className="slip-mark" src={mark} alt="" /> : null}
-              {title}
-            </div>
+            <div className="slip-title">{title}</div>
             <div className="slip-pin">{t.pin}</div>
             <div className="slip-url">{url.replace(/^https?:\/\//, '')}</div>
           </div>
+          {/* The mark balances the code across the slip, at the same size. */}
+          {mark ? <img className="slip-mark" src={mark} alt="" /> : null}
         </div>
       ))}
         </div>

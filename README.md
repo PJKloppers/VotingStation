@@ -146,8 +146,10 @@ everything else.
 ## An organization's mark
 
 An organizer can set a logo from **Settings** on their organization card. It
-shows on the ballot a voter opens, on the public results, on each printed slip,
-and in the middle of every QR on that sheet.
+shows on the ballot a voter opens, on the public results, in the middle of every
+QR on a printed sheet, and again on the right of each slip at the same visible
+size as the code — the code's box includes its quiet zone, so the mark is scaled
+by that same fraction or the two look different sizes in the same box.
 
 The image lives in a storage bucket; `organization_images` records which object
 belongs to which organization and is owner-only. The bucket is public to *read* —
@@ -193,8 +195,12 @@ not writable from a client. A ballot stops taking votes the moment it expires
 rather than whenever the purge next runs.
 
 **PINs print as slips.** The PINs tab renders one cut-out per active PIN — a QR
-of the voting link down the left, and the ballot title, the code and the link
-beside it — revealed by `@media print`
+of the voting link down the left, the ballot title, the code and the link in the
+middle, and the organization's mark on the right. The printed link is
+`/vote/<org slug>/<ballot slug>`, because a slip is read by a person and typed
+by one; `resolve_ballot` turns that pair back into the ballot, since
+organizations are owner-only and a voter cannot do that join. Both forms of the
+link work — revealed by `@media print`
 rather than by opening a second document, so there is nothing to keep in step
 and no popup for a browser to block. Eight to a page, two across and four down.
 Each group of eight is its own page box, `100vh` tall with four rows of

@@ -93,14 +93,29 @@ export async function ballotResults(ballotId: string): Promise<BallotResults | R
   return unwrap(data, error);
 }
 
-export async function publicBallot(orgSlug: string, ballotSlug: string): Promise<Ballot | null> {
-  const { data: org } = await supabase
-    .from('organizations').select('id').eq('slug', orgSlug).maybeSingle();
-  if (!org) return null;
-  const { data } = await supabase
-    .from('ballots').select(BALLOT_COLUMNS)
-    .eq('org_id', org.id).eq('slug', ballotSlug).maybeSingle();
-  return data as Ballot | null;
+/**
+ * The ballot behind a pair of slugs.
+ *
+ * Through an RPC, not a join: organizations are owner-only, so a voter arriving
+ * at /vote/demo-society/agm-2026 cannot look the organization up themselves.
+ */
+export async function resolveBallot(
+  orgSlug: string, ballotSlug: string,
+): Promise<string | null> {
+  const { data, error } = await supabase.rpc('resolve_ballot', {
+    p_org: orgSlug, p_ballot: ballotSlug,
+  });
+  if (error) throw new ApiError(error.message);
+  return data;
+}
+
+/** The readable link for a ballot: `<org slug>/<ballot slug>`. */
+export async function ballotSlugs(
+  ballotId: string,
+): Promise<{ org: string; ballot: string } | null> {
+  const { data, error } = await supabase.rpc('ballot_slugs', { p_ballot: ballotId });
+  if (error) throw new ApiError(error.message);
+  return data;
 }
 
 export async function ballotById(id: string): Promise<Ballot | null> {

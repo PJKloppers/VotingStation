@@ -19,6 +19,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import * as api from '../lib/api';
 import { takePin } from '../lib/handoff';
+import { useBallotId, type Address } from '../lib/resolve';
 import { minimumPicks, selectionError, type HighestXConfig } from '../lib/rules';
 import { navigate } from '../lib/router';
 import type {
@@ -27,7 +28,26 @@ import type {
 import { Banner, Card, Empty, Pill, Rail, Spinner } from '../components/ui';
 import { QuestionTally } from './Results';
 
-export function Vote({ ballotId }: { ballotId: string }) {
+export function Vote(address: Address) {
+  const { ballotId, pending } = useBallotId(address);
+  if (pending) return <main className="narrow"><Spinner label="Finding the ballot" /></main>;
+  if (!ballotId) return <NoSuchBallot />;
+  return <Ballot ballotId={ballotId} />;
+}
+
+function NoSuchBallot() {
+  return (
+    <main className="narrow">
+      <Card>
+        <h1>Ballot not found</h1>
+        <p className="lede">That link does not point at a published ballot.</p>
+        <button className="primary" onClick={() => navigate('/')}>Back to the start</button>
+      </Card>
+    </main>
+  );
+}
+
+function Ballot({ ballotId }: { ballotId: string }) {
   const [ballot, setBallot] = useState<Ballot | null>(null);
   const [logo, setLogo] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -93,17 +113,7 @@ export function Vote({ ballotId }: { ballotId: string }) {
 
   if (loading) return <main className="narrow"><Spinner label="Opening the ballot" /></main>;
 
-  if (!ballot) {
-    return (
-      <main className="narrow">
-        <Card>
-          <h1>Ballot not found</h1>
-          <p className="lede">That link does not point at a published ballot.</p>
-          <button className="primary" onClick={() => navigate('/')}>Back to the start</button>
-        </Card>
-      </main>
-    );
-  }
+  if (!ballot) return <NoSuchBallot />;
 
   const exit = () => { setPin(''); setState(null); setError(''); };
 

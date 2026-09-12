@@ -9,6 +9,8 @@
  * reaches the finished state cannot see a door that will not open.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import jsQR from 'jsqr';
+import { PNG } from 'pngjs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -596,6 +598,91 @@ describe('an organization\'s mark', () => {
     expect(await page.$$eval('.slip-mark', (n) => n.length))
       .toBe(await page.$$eval('.slip', (n) => n.length));
 
+    await page.close();
+  });
+});
+
+
+describe('the printed link', () => {
+  // A slip is read by a person and typed by one, so it carries the pair of
+  // slugs rather than a uuid -- and that link has to land on this ballot.
+  let orgSlug = '';
+  let ballotSlug = '';
+  let scratch = '';
+
+  beforeAll(async () => {
+    const { data: user } = await organizer.auth.getUser();
+    const { data: org } = await organizer.from('organizations')
+      .select('id, slug').eq('owner_id', user.user!.id).limit(1).single();
+    orgSlug = org!.slug;
+    ballotSlug = uniqueSlug('linked');
+
+    const { data: b } = await organizer.from('ballots').insert({
+      org_id: org!.id, slug: ballotSlug, title: 'Linked Ballot', status: 'live',
+    }).select('id').single();
+    scratch = b!.id;
+    await organizer.rpc('issue_tokens', { p_ballot: scratch, p_count: 2 });
+  });
+
+  afterAll(async () => {
+    if (scratch) await organizer.from('ballots').delete().eq('id', scratch);
+  });
+
+  test('the slip prints the slugs, not the uuid', async () => {
+    const page = await signedInPage();
+    await page.goto(`${origin}/#/manage/${scratch}`, { waitUntil: 'networkidle0' });
+    await clickByText(page, 'button', 'PINs');
+    await page.waitForSelector('table tbody tr', { timeout: 15000 });
+    await page.evaluate(() => { window.print = () => {}; });
+    await clickByText(page, 'button', 'Print slips');
+    await page.waitForSelector('.slip-url', { timeout: 15000 });
+
+    const shown = await page.$eval('.slip-url', (n) => n.textContent ?? '');
+    expect(shown).toContain(`/vote/${orgSlug}/${ballotSlug}`);
+    expect(shown).not.toContain(scratch);
+    await page.close();
+  });
+
+  test('and the code on it decodes to that same link', async () => {
+    const page = await signedInPage();
+    await page.setViewport({ width: 900, height: 900, deviceScaleFactor: 3 });
+    await page.goto(`${origin}/#/manage/${scratch}`, { waitUntil: 'networkidle0' });
+    await clickByText(page, 'button', 'PINs');
+    await page.waitForSelector('table tbody tr', { timeout: 15000 });
+    await page.evaluate(() => { window.print = () => {}; });
+    await clickByText(page, 'button', 'Print slips');
+    await page.waitForSelector('.slip-qr', { timeout: 15000 });
+    await page.emulateMediaType('print');
+
+    const expected = `${origin}/#/vote/${orgSlug}/${ballotSlug}`;
+    const codes = await page.$$('.slip-qr');
+    expect(codes.length).toBeGreaterThan(0);
+
+    for (const code of codes) {
+      const png = PNG.sync.read(Buffer.from(await code.screenshot({ encoding: 'binary' }) as Buffer));
+      const found = jsQR(new Uint8ClampedArray(png.data), png.width, png.height);
+      // The mark sits in the middle of it, so this is also the check that the
+      // patch stays inside what error correction level M can recover.
+      expect(found?.data).toBe(expected);
+    }
+    await page.emulateMediaType(undefined);
+    await page.close();
+  });
+
+  test('following that link lands on this ballot and no other', async () => {
+    const page = await browser.newPage();
+    await page.setViewport({ width: 420, height: 900 });
+    await page.goto(`${origin}/#/vote/${orgSlug}/${ballotSlug}`, { waitUntil: 'networkidle0' });
+    await page.waitForSelector('.pin-entry', { timeout: 15000 });
+    await waitForText(page, 'Linked Ballot');
+    await page.close();
+  });
+
+  test('a link with the wrong slugs finds nothing', async () => {
+    const page = await browser.newPage();
+    await page.goto(`${origin}/#/vote/${orgSlug}/no-such-ballot`, { waitUntil: 'networkidle0' });
+    await waitForText(page, 'not point at a published ballot');
+    expect(await page.$('.pin-entry')).toBeNull();
     await page.close();
   });
 });

@@ -14,10 +14,18 @@ import * as api from '../lib/api';
 import type {
   BallotResults, CountedOption, HighestXTally, OutrightTally, QuestionResult, YesNoTally,
 } from '../lib/types';
+import { useBallotId, type Address } from '../lib/resolve';
 import { thresholdRule } from '../lib/rules';
 import { Banner, Card, Empty, Pill, Spinner } from '../components/ui';
 
-export function Results({ ballotId }: { ballotId: string }) {
+export function Results(address: Address) {
+  const { ballotId, pending } = useBallotId(address);
+  if (pending) return <main><Spinner label="Finding the ballot" /></main>;
+  if (!ballotId) return <main><Banner kind="error">That link does not point at a published ballot.</Banner></main>;
+  return <Tally ballotId={ballotId} />;
+}
+
+function Tally({ ballotId }: { ballotId: string }) {
   const [data, setData] = useState<BallotResults | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(true);
