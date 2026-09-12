@@ -58,6 +58,9 @@ const result = await Bun.build({
   outdir: 'dist',
   target: 'browser',
   minify: !dev,
+  // Without this a dynamic import is inlined and the lazy chunk is a lie: the
+  // scanner and its decoder would ship to every voter who types a link.
+  splitting: true,
   sourcemap: dev ? 'inline' : 'none',
   publicPath: './',
   define,

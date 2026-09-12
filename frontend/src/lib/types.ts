@@ -31,14 +31,22 @@ export interface Organization {
   created_at: string;
 }
 
-/** A ballot a PIN was found on. */
-export interface PinMatch {
-  ballot_id: string;
-  title: string;
-  status: 'live' | 'closed';
-  org_name: string;
-  org_slug: string;
-  org_logo_path: string | null;
+/** One organization's published ballots, for the page a scanned slug lands on. */
+export interface OrgPage {
+  org: {
+    slug: string;
+    name: string;
+    description: string;
+    logo_path: string | null;
+  };
+  ballots: Array<{
+    id: string;
+    slug: string;
+    title: string;
+    description: string;
+    status: 'live' | 'closed';
+    results_public: boolean;
+  }>;
 }
 
 export interface Ballot {

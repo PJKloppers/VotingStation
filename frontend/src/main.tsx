@@ -2,10 +2,12 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import './app.css';
 
-import { useSession, signOut } from './lib/auth';
-import { href, parseRoute, useRoute } from './lib/router';
+import { useSession } from './lib/auth';
+import { parseRoute, useRoute } from './lib/router';
+import { Footer, Header } from './components/Header';
 import { Admin } from './pages/Admin';
 import { Home } from './pages/Home';
+import { Organization } from './pages/Organization';
 import { Live } from './pages/Live';
 import { Manage } from './pages/Manage';
 import { Results } from './pages/Results';
@@ -34,6 +36,9 @@ function App() {
         return second
           ? <Results orgSlug={first} ballotSlug={second} />
           : <Results ballotId={first} />;
+      case 'o':
+        // Where a code carrying a single slug lands.
+        return first ? <Organization orgSlug={first} /> : <Home />;
       case 'signin':
         return <SignIn />;
       case 'admin':
@@ -60,39 +65,9 @@ function App() {
 
   return (
     <div className="shell">
-      <header className="topbar">
-        <div className="brand-block">
-          <a className="brand" href={href('/')}>
-            <span className="mark" aria-hidden="true">VS</span>
-            VotingStation
-          </a>
-          <a
-            className="brand-repo"
-            href="https://github.com/PJKloppers/VotingStation"
-            target="_blank"
-            rel="noreferrer"
-          >
-            github.com/PJKloppers/VotingStation
-          </a>
-        </div>
-        <nav>
-          <a href={href('/')} aria-current={head === undefined ? 'page' : undefined}>Ballots</a>
-          {session ? (
-            <>
-              <a href={href('/admin')} aria-current={head === 'admin' ? 'page' : undefined}>Organize</a>
-              <button onClick={() => void signOut()}>Sign out</button>
-            </>
-          ) : (
-            <a href={href('/signin')} aria-current={head === 'signin' ? 'page' : undefined}>Sign in</a>
-          )}
-        </nav>
-      </header>
-
+      <Header session={!!session} at={head} />
       {page}
-
-      <footer className="site">
-        Token voting for organizations · each question publishes when its gate closes
-      </footer>
+      <Footer />
     </div>
   );
 }

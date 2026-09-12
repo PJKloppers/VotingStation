@@ -211,45 +211,6 @@ test('exit voting hands the ballot back and asks for a PIN again', async () => {
   });
 });
 
-describe('the front page', () => {
-  test('turns a PIN into the right ballot, without asking for it twice', async () => {
-    await organizer.rpc('set_gate', {
-      p_ballot: ballotId, p_type: 'yes_no', p_question: motionId, p_open: true, p_only: true,
-    });
-
-    const page = await newPage();
-    await page.goto(`${origin}/#/`, { waitUntil: 'networkidle0' });
-    await enterPin(page, pins[1]!);
-    await clickByText(page, 'button', 'Open my ballot');
-
-    // One match goes straight through. Six digits can legitimately exist on a
-    // second ballot, which shows a chooser instead -- either is correct.
-    await page.waitForFunction(
-      () => window.location.hash.startsWith('#/vote/')
-        || document.body.innerText.includes('more than one ballot'),
-      { timeout: 15000 },
-    );
-    if (!page.url().includes('#/vote/')) {
-      await clickByText(page, '.lobby-item', 'Browser Run');
-    }
-
-    // Straight to the questions: the PIN screen is never shown again.
-    await waitForText(page, 'Adopt the minutes');
-    expect(await page.$('.pin-entry')).toBeNull();
-    await page.close();
-  });
-
-  test('says so when a PIN opens nothing', async () => {
-    const page = await newPage();
-    await page.goto(`${origin}/#/`, { waitUntil: 'networkidle0' });
-    await enterPin(page, '000000');
-    await clickByText(page, 'button', 'Open my ballot');
-    await waitForText(page, 'not valid on any open ballot');
-    expect(page.url()).not.toContain('#/vote/');
-    await page.close();
-  });
-});
-
 describe('the results page', () => {
   test('withholds a question that is still taking votes', async () => {
     await organizer.from('ballots')

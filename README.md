@@ -51,17 +51,29 @@ least* two thirds. Storing `0.667` would have quietly failed a 2-of-3 vote.
 
 ## Arriving
 
-A voter arrives holding a PIN and nothing else, so the front page asks for that
-and nothing else — there is no directory to browse. A PIN is unique *per ballot*
-rather than globally, so `find_ballots_for_pin` resolves it: one match goes
-straight through to the lobby, several ask which, none says so. The PIN is
-handed to the ballot page in memory, never through the URL or storage — a reload
-asks for it again, which is the right way round.
+A voter arrives holding a printed slip, so the front page is a camera pointed at
+it. The code carries the ballot's own link; scanning it lands them on that
+ballot, where their PIN opens their vote.
 
-That lookup widens the guessing surface, since one guess now probes every
-published ballot at once. The counterweight is the same lock-out the ballot
-itself uses — twelve failed lookups per browser per fifteen minutes, failures
-only — and the answer carries only a ballot's title and whose it is.
+That ordering is the point. Nothing searches for a PIN any more, so a code only
+has to be unique on the ballot it belongs to — which it always was,
+`unique (ballot_id, pin)` — and far more than a million codes can exist across
+the system. It also closes what the old front page cost: a global lookup meant
+one guess probed every published ballot at once.
+
+A scanned code is read by `readDestination`, which takes all three forms — the
+pair of slugs printed today, the uuid on slips already handed out, and a single
+organization slug, which lands on that organization's published ballots. A URL
+has to carry one of the app's own routes to count at all: without that check the
+deploy's own `/VotingStation/` prefix read as an organization by that name, and
+so did any one-segment URL from anywhere.
+
+The camera needs a secure context, so plain http on a venue's LAN refuses it —
+and a locked-down phone or a laptop without a camera will too. The slip prints
+the link in words under the code for exactly that, and the page takes what is
+printed there. The scanner and its decoder are loaded only when the button is
+pressed: `splitting` is on in the build, so a voter who types a link or follows
+one straight to a ballot never downloads either.
 
 ## How a meeting runs
 

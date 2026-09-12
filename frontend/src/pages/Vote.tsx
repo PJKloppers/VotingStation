@@ -18,7 +18,6 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import * as api from '../lib/api';
-import { takePin } from '../lib/handoff';
 import { useBallotId, type Address } from '../lib/resolve';
 import { minimumPicks, selectionError, type HighestXConfig } from '../lib/rules';
 import { navigate } from '../lib/router';
@@ -91,16 +90,6 @@ function Ballot({ ballotId }: { ballotId: string }) {
       setBusy(false);
     }
   }, [apply, ballotId, pin]);
-
-  // A voter who entered their PIN on the front page should not be asked twice.
-  // The handoff is in memory only, so a reload lands on the PIN screen.
-  useEffect(() => {
-    const handed = takePin(ballotId);
-    if (!handed) return;
-    setPin(handed);
-    void refresh(handed);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ballotId]);
 
   // Optional auto-reload. Left at 0 for a big meeting: two hundred phones
   // polling every ten seconds is twenty calls a second.

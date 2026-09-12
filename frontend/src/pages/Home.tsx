@@ -1,107 +1,104 @@
 /**
  * The front page.
  *
- * A voter arrives holding a PIN and nothing else, so that is all the page asks
- * for. A PIN is unique per ballot rather than globally, so it is looked up: one
- * match goes straight through, several ask which, none says so.
+ * A voter arrives holding a printed slip, so the page is a camera pointed at
+ * it. The code carries the ballot's own link, which is what makes a code only
+ * have to be unique on the ballot it belongs to -- nothing here searches for a
+ * PIN, because nothing here knows or needs to know one.
+ *
+ * The scanner is loaded on demand. A voter who types the link, or who follows
+ * one straight to a ballot, never downloads a camera or a decoder.
  */
-import { useCallback, useState } from 'react';
-import * as api from '../lib/api';
-import { handOffPin } from '../lib/handoff';
+import { lazy, Suspense, useCallback, useState } from 'react';
 import { navigate } from '../lib/router';
-import type { PinMatch } from '../lib/types';
-import { Banner, Card, Pill } from '../components/ui';
+import { readDestination, routeFor, type Destination } from '../lib/scan';
+import { Banner, Card, Field, Spinner } from '../components/ui';
+
+const Scanner = lazy(() => import('../components/Scanner'));
 
 export function Home() {
+  const [scanning, setScanning] = useState(false);
+
+  const go = useCallback((to: Destination) => {
+    setScanning(false);
+    navigate(routeFor(to));
+  }, []);
+
   return (
     <main className="narrow">
       <div className="stack">
-        <header style={{ maxWidth: '40ch' }}>
+        <header style={{ maxWidth: '38ch' }}>
           <p className="eyebrow">Token voting</p>
-          <h1>Enter your PIN to vote.</h1>
+          <h1>Scan the code on your slip.</h1>
         </header>
-        <PinGate />
+
+        <Card>
+          {scanning ? (
+            <Suspense fallback={<Spinner label="Starting the camera" />}>
+              <Scanner onFound={go} />
+            </Suspense>
+          ) : (
+            <>
+              <p className="muted">
+                Your organizer handed you a slip with a code on it. Scan it and you
+                will land on the right ballot, where your PIN opens your vote.
+              </p>
+              <button className="primary block" style={{ marginTop: 6 }}
+                      onClick={() => setScanning(true)}>
+                Scan a code
+              </button>
+            </>
+          )}
+
+          {scanning ? (
+            <button className="ghost block" style={{ marginTop: 12 }}
+                    onClick={() => setScanning(false)}>
+              Stop the camera
+            </button>
+          ) : null}
+        </Card>
+
+        <ByHand onFound={go} />
       </div>
     </main>
   );
 }
 
-function PinGate() {
-  const [pin, setPin] = useState('');
-  const [busy, setBusy] = useState(false);
+/**
+ * The way in without a camera.
+ *
+ * A locked-down phone, a laptop with no camera, or plain http on a venue's LAN
+ * all refuse `getUserMedia`. The slip prints the link in words underneath the
+ * code for exactly this, so this box takes what is printed there.
+ */
+function ByHand({ onFound }: { onFound: (to: Destination) => void }) {
+  const [text, setText] = useState('');
   const [error, setError] = useState('');
-  const [choices, setChoices] = useState<PinMatch[] | null>(null);
 
-  const open = useCallback((match: PinMatch, thePin: string) => {
-    handOffPin(match.ballot_id, thePin);
-    navigate(`/vote/${match.ballot_id}`);
-  }, []);
-
-  const submit = async (e: React.FormEvent) => {
+  const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    setBusy(true); setError(''); setChoices(null);
-    try {
-      const answer = await api.findBallotsForPin(pin);
-      if (!answer.ok) { setError(answer.error); return; }
-
-      // One ballot is the ordinary case: go, without asking anything.
-      if (answer.ballots.length === 1) open(answer.ballots[0]!, pin);
-      else setChoices(answer.ballots);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Something went wrong.');
-    } finally {
-      setBusy(false);
+    const to = readDestination(text);
+    if (!to) {
+      setError('That does not look like a ballot link. It is the line under the code.');
+      return;
     }
+    setError('');
+    onFound(to);
   };
 
   return (
     <Card>
-      <p className="muted">
-        Your organizer issued you a six-digit PIN. It is the only thing you need.
-      </p>
+      <h2>Or type the link</h2>
       {error ? <Banner kind="error">{error}</Banner> : null}
-
-      <form onSubmit={submit} style={{ marginTop: 14 }}>
-        <input
-          className="pin-entry"
-          inputMode="numeric"
-          autoComplete="one-time-code"
-          pattern="[0-9]*"
-          maxLength={6}
-          name="pin"
-          aria-label="Your six-digit PIN"
-          placeholder="000000"
-          value={pin}
-          onChange={(e) => {
-            setPin(e.target.value.replace(/\D/g, '').slice(0, 6));
-            setChoices(null); setError('');
-          }}
-        />
-        <button type="submit" className="primary block" style={{ marginTop: 14 }}
-                disabled={busy || pin.length !== 6}>
-          {busy ? 'Checking…' : 'Open my ballot'}
-        </button>
+      <form onSubmit={submit}>
+        <Field label="The line printed under the code"
+               help="The whole address, or just the two names from it.">
+          <input name="ballot_link" value={text} autoComplete="off"
+                 placeholder="demo-society/agm-2026"
+                 onChange={(e) => { setText(e.target.value); setError(''); }} />
+        </Field>
+        <button type="submit" className="ghost" disabled={!text.trim()}>Open that ballot</button>
       </form>
-
-      {choices ? (
-        <div style={{ marginTop: 18 }}>
-          <p className="faint">
-            That PIN opens more than one ballot. Which one are you voting on?
-          </p>
-          {choices.map((c) => (
-            <button key={c.ballot_id} className="lobby-item" onClick={() => open(c, pin)}>
-              {api.logoUrl(c.org_logo_path)
-                ? <img className="ballot-mark small" src={api.logoUrl(c.org_logo_path)!} alt="" />
-                : null}
-              <span className="lobby-body">
-                <span className="lobby-title">{c.title}</span>
-                <span className="faint" style={{ display: 'block' }}>{c.org_name}</span>
-              </span>
-              <Pill tone={c.status === 'live' ? 'live' : 'closed'}>{c.status}</Pill>
-            </button>
-          ))}
-        </div>
-      ) : null}
     </Card>
   );
 }

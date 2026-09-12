@@ -828,3 +828,33 @@ button.share-copy[data-state="copied"]:hover {
 @media (max-width: 560px) {
   .org-mark { flex-direction: column; }
 }
+
+/* ---------------------------------------------------------------- scanner
+   The camera fills a fixed frame so the page does not jump when the stream
+   arrives, and the reticle is the only instruction most people need. */
+
+.scanner-view {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  width: 100%;
+  overflow: hidden;
+  border-radius: var(--radius);
+  background: var(--ink);
+  display: grid;
+  place-items: center;
+}
+.scanner-view video {
+  width: 100%; height: 100%; object-fit: cover; display: block;
+}
+
+.scanner-reticle {
+  position: absolute; inset: 50% auto auto 50%;
+  translate: -50% -50%;
+  width: 62%; aspect-ratio: 1;
+  border: 3px solid rgb(255 255 255 / 0.9);
+  border-radius: 12px;
+  box-shadow: 0 0 0 9999px rgb(0 0 0 / 0.32);
+}
+
+.scanner-note { color: #fff; font-size: 0.9rem; margin: 0; }
+.scanner > p { margin: 10px 0 0; }

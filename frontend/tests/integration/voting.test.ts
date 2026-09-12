@@ -1343,77 +1343,60 @@ describe('PINs carry no label', () => {
   });
 });
 
-describe('finding a ballot from a PIN alone', () => {
-  const lookup = (pin: string, fp: string) =>
-    call<{ ok: boolean; error?: string; ballots?: Array<{ ballot_id: string; org_name: string }> }>(
-      voter, 'find_ballots_for_pin', { p_pin: pin, p_fingerprint: fp });
+describe('an organization by its slug', () => {
+  // Where a scanned code carrying one slug lands. Organizations are owner-only,
+  // so this is the only thing that may read one by slug -- and it answers with
+  // published ballots alone.
+  let orgSlug = '';
 
-  test('names the ballot a real PIN opens', async () => {
+  beforeAll(async () => {
+    const { data: org } = await organizer.from('organizations')
+      .select('slug').eq('id', orgId).single();
+    orgSlug = org!.slug;
     await organizer.from('ballots').update({ status: 'live' }).eq('id', ballotId);
-    const answer = await lookup(pins[1]!, 'fp-lookup');
-    expect(answer.ok).toBe(true);
-    expect(answer.ballots!.map((b) => b.ballot_id)).toContain(ballotId);
+    await organizer.rpc('renew_ballot', { p_ballot: ballotId });
   });
 
-  test('carries the organization, so a chooser can be labelled', async () => {
-    const answer = await lookup(pins[1]!, 'fp-lookup');
-    const mine = answer.ballots!.find((b) => b.ballot_id === ballotId)!;
-    expect(mine.org_name.length).toBeGreaterThan(0);
+  test('a voter with no account gets the organization and what it published', async () => {
+    const page = await call<{
+      org: { slug: string; name: string };
+      ballots: Array<{ id: string; slug: string; status: string }>;
+    }>(voter, 'org_ballots', { p_org: orgSlug });
+
+    expect(page.org.slug).toBe(orgSlug);
+    expect(page.ballots.map((b) => b.id)).toContain(ballotId);
+    for (const b of page.ballots) expect(b.status).not.toBe('draft');
   });
 
-  test('refuses a PIN that opens nothing', async () => {
-    const answer = await lookup('000000', 'fp-lookup-miss');
-    expect(answer.ok).toBe(false);
-    expect(answer.error).toContain('not valid');
-  });
-
-  test('refuses a PIN of the wrong length without counting it', async () => {
-    const answer = await lookup('12', 'fp-lookup-short');
-    expect(answer.ok).toBe(false);
-    expect(answer.error).toBe('A PIN is six digits.');
-  });
-
-  test('will not point at a draft ballot', async () => {
+  test('a draft is left out of it', async () => {
     await organizer.from('ballots').update({ status: 'draft' }).eq('id', ballotId);
-    const answer = await lookup(pins[1]!, 'fp-lookup-draft');
-    expect(answer.ok).toBe(false);
+    const page = await call<{ ballots: Array<{ id: string }> }>(
+      voter, 'org_ballots', { p_org: orgSlug });
+    expect(page.ballots.map((b) => b.id)).not.toContain(ballotId);
     await organizer.from('ballots').update({ status: 'live' }).eq('id', ballotId);
   });
 
-  test('returns every ballot a PIN happens to open', async () => {
-    // The same six digits, minted by hand on a second ballot.
-    const { data: other } = await organizer.from('ballots').insert({
-      org_id: orgId, slug: uniqueSlug('twin'), title: 'Twin Ballot', status: 'live',
-    }).select('id').single();
-    await organizer.from('ballot_tokens')
-      .insert({ ballot_id: other!.id, pin: pins[1]! });
-
-    const answer = await lookup(pins[1]!, 'fp-lookup-twin');
-    expect(answer.ok).toBe(true);
-    expect(answer.ballots!.map((b) => b.ballot_id).sort())
-      .toEqual([ballotId, other!.id].sort());
-
-    await organizer.from('ballots').delete().eq('id', other!.id);
+  test('a slug nobody owns answers with nothing', async () => {
+    const { data } = await voter.rpc('org_ballots', { p_org: 'no-such-organization' });
+    expect(data).toBeNull();
   });
 
-  test('locks a browser out after twelve misses, and only misses count', async () => {
-    const fp = `fp-brute-${Date.now()}`;
-    for (let i = 0; i < 12; i++) {
-      const miss = await lookup(String(100000 + i), fp);
-      expect(miss.ok).toBe(false);
-    }
-    const locked = await lookup(pins[1]!, fp);
-    expect(locked.ok).toBe(false);
-    expect(locked.error).toContain('Too many incorrect PINs');
-
-    // A browser that has not been guessing is unaffected.
-    const innocent = await lookup(pins[1]!, `fp-clean-${Date.now()}`);
-    expect(innocent.ok).toBe(true);
+  test('it is still no way to list the organizations', async () => {
+    const { data } = await voter.from('organizations').select('slug');
+    expect(data ?? []).toHaveLength(0);
   });
 
-  test('is not reachable as a table, only as that function', async () => {
-    const { error } = await voter.from('pin_lookups').select('fingerprint');
-    expect(error).not.toBeNull();
+  test('the global PIN lookup is gone, and so is its table', async () => {
+    // A voter reaches the ballot before entering a code now, so nothing
+    // searches for one -- which is what let a single guess probe every
+    // published ballot at once.
+    const { error: fn } = await voter.rpc('find_ballots_for_pin', {
+      p_pin: '123456', p_fingerprint: 'gone',
+    });
+    expect(fn).not.toBeNull();
+
+    const { error: table } = await voter.from('pin_lookups').select('fingerprint');
+    expect(table).not.toBeNull();
   });
 });
 

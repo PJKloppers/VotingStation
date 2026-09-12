@@ -10,7 +10,7 @@ import { supabase, SUPABASE_URL } from './supabase';
 import { fingerprint } from './fingerprint';
 import type {
   Accepted, Ballot, BallotResults, HighestOutrightQuestion, HighestXQuestion,
-  Organization, OrganizationImage, PinMatch, QuestionOption, QuestionType,
+  Organization, OrganizationImage, OrgPage, QuestionOption, QuestionType,
   Refused, TokenReport, VoterState, YesNoQuestion,
 } from './types';
 
@@ -72,20 +72,6 @@ export async function castHighestX(
   return unwrap(data, error);
 }
 
-/**
- * Which published ballots a PIN opens.
- *
- * A PIN is unique per ballot, not globally, so this can legitimately come back
- * with more than one and the caller has to ask which. Rate limited in the
- * database on the same terms as a PIN attempt.
- */
-export async function findBallotsForPin(pin: string): Promise<{ ok: true; ballots: PinMatch[] } | Refused> {
-  const { data, error } = await supabase.rpc('find_ballots_for_pin', {
-    p_pin: pin, p_fingerprint: fingerprint(),
-  });
-  return unwrap(data, error);
-}
-
 /* -------------------------------------------------------------- the public */
 
 export async function ballotResults(ballotId: string): Promise<BallotResults | Refused> {
@@ -105,6 +91,18 @@ export async function resolveBallot(
   const { data, error } = await supabase.rpc('resolve_ballot', {
     p_org: orgSlug, p_ballot: ballotSlug,
   });
+  if (error) throw new ApiError(error.message);
+  return data;
+}
+
+/**
+ * One organization and what it has published, by slug.
+ *
+ * Through an RPC because organizations are owner-only: this is the only thing
+ * that may read one by slug, and it answers with published ballots alone.
+ */
+export async function orgPage(orgSlug: string): Promise<OrgPage | null> {
+  const { data, error } = await supabase.rpc('org_ballots', { p_org: orgSlug });
   if (error) throw new ApiError(error.message);
   return data;
 }

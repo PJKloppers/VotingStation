@@ -331,13 +331,14 @@ test('eight slips to a page, whatever the paper and the scale', async () => {
       .select('status').eq('id', createdBallotId).single();
     expect(data!.status).toBe('live');
 
-    // The front page asks for a PIN and nothing else; a published ballot is
-    // reached by its own link, not by browsing.
+    // The front page is a camera and a link box; a published ballot is reached
+    // by its own link, not by browsing to it.
     await page.goto(`${origin}/#/`, { waitUntil: 'networkidle0' });
-    await page.waitForSelector('.pin-entry', { timeout: 15000 });
+    await page.waitForSelector('input[name="ballot_link"]', { timeout: 15000 });
     const body = await page.evaluate(() => document.body.innerText);
     expect(body).not.toContain(title);
     expect(body).not.toContain('browse organizations');
+    expect(await page.$('.pin-entry')).toBeNull();   // the PIN belongs on the ballot
 
     await page.close();
   });
