@@ -11,9 +11,8 @@
  * turned down with the reason rather than ignored.
  *
  * Everything heavy is loaded here rather than with the app: the whole module is
- * imported lazily by the PINs view, and the two decoders inside it are imported
- * again inside the camera's own start-up. An organizer who never opens this
- * pays for none of it.
+ * imported lazily by the PINs view, and the two decoders arrive with the camera
+ * rather than with it. An organizer who never opens this pays for none of it.
  *
  * Deleting is not undoable and takes the votes with it, so each scan stops and
  * asks, with the vote count in the question. The camera picks up again after
@@ -22,14 +21,10 @@
 import { useCallback, useRef, useState } from 'react';
 import * as api from '../lib/api';
 import { useCamera } from '../lib/camera';
+import { loadCodeReader, type CodeReader } from '../lib/codes';
 import { pinFromScan } from '../lib/scan';
 import type { TokenRow } from '../lib/types';
 import { Banner } from './ui';
-
-type Decoders = {
-  qr: (d: Uint8ClampedArray, w: number, h: number) => { data: string } | null;
-  barcode: (pixels: ImageData) => string | null;
-};
 
 /** What the camera last found, and what is being asked about it. */
 type Found =
@@ -45,7 +40,7 @@ export default function PinDeleteScanner(
   const [found, setFound] = useState<Found | null>(null);
   const [error, setError] = useState('');
   const [done, setDone] = useState<string[]>([]);
-  const decoders = useRef<Decoders | null>(null);
+  const read = useRef<CodeReader | null>(null);
 
   // Held in a ref so the frame callback always sees the current roll without
   // the camera being restarted every time the table behind it reloads.
@@ -58,73 +53,13 @@ export default function PinDeleteScanner(
   paused.current = halted;
 
   const load = useCallback(async () => {
-    const [{ default: jsQR }, zxing] = await Promise.all([
-      import('jsqr'),
-      import('@zxing/library'),
-    ]);
-    const {
-      MultiFormatOneDReader, BinaryBitmap, HybridBinarizer, GlobalHistogramBinarizer,
-      RGBLuminanceSource, DecodeHintType, BarcodeFormat,
-    } = zxing;
-
-    const hints = new Map();
-    hints.set(DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.CODE_128]);
-    const reader = new MultiFormatOneDReader(hints);
-
-    decoders.current = {
-      qr: (d, w, h) => jsQR(d, w, h, { inversionAttempts: 'dontInvert' }),
-      barcode: (pixels) => {
-        // One luminance byte a pixel: given a Uint8ClampedArray, ZXing takes
-        // the values as already computed rather than as RGBA.
-        const lum = new Uint8ClampedArray(pixels.width * pixels.height);
-        for (let i = 0; i < lum.length; i++) {
-          lum[i] = (pixels.data[i * 4]! * 306 + pixels.data[i * 4 + 1]! * 601
-                    + pixels.data[i * 4 + 2]! * 117) >> 10;
-        }
-        /*
-         * Upright and on its side, each through both binarizers.
-         *
-         * The turn is not optional: the barcode is printed standing up the
-         * slip, ZXing's luminance source reports no rotation support so it
-         * will not try the other way round on its own, and somebody holding a
-         * slip up to a camera holds it whichever way it came off the pile.
-         *
-         * Which binarizer copes is a property of the light rather than of the
-         * code -- the block-local one handles a slip lit unevenly, the global
-         * one a flat field where the other finds edges that are not there.
-         *
-         * Each attempt after the first runs only because the one before found
-         * nothing, which on a frame with no barcode in it -- most frames -- is
-         * a few more passes over pixels already in cache.
-         */
-        const w = pixels.width;
-        const h = pixels.height;
-        const turned = new Uint8ClampedArray(lum.length);
-        for (let y = 0; y < h; y++) {
-          for (let x = 0; x < w; x++) turned[x * h + (h - 1 - y)] = lum[y * w + x]!;
-        }
-
-        for (const [px, pw, ph] of [[lum, w, h], [turned, h, w]] as const) {
-          for (const Binarizer of [HybridBinarizer, GlobalHistogramBinarizer]) {
-            try {
-              const bitmap = new BinaryBitmap(new Binarizer(
-                new RGBLuminanceSource(px, pw, ph)));
-              return reader.decode(bitmap, hints).getText();
-            } catch {
-              // not this way up, or not with this threshold
-            }
-          }
-        }
-        return null;
-      },
-    };
+    read.current = await loadCodeReader();
   }, []);
 
-  const { video, canvas, state, error: cameraError } = useCamera((pixels, w, h) => {
-    if (paused.current || !decoders.current) return;
+  const { video, canvas, state, error: cameraError } = useCamera((pixels) => {
+    if (paused.current || !read.current) return;
 
-    const qr = decoders.current.qr(pixels.data, w, h)?.data;
-    const text = qr ?? decoders.current.barcode(pixels);
+    const text = read.current(pixels);
     if (!text) return;
 
     const pin = pinFromScan(text);

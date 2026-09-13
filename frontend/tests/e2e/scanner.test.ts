@@ -323,3 +323,92 @@ describe('scanning a slip to take its PIN off the roll', () => {
     await browser.close();
   }, 90000);
 });
+
+describe('a voter reading their own PIN off the slip', () => {
+  /*
+   * The other side of the same camera: not the desk taking a PIN off the roll,
+   * but the person holding the slip, who would otherwise be typing six digits
+   * off a small line of print while standing up in a hall.
+   */
+  let ballot = '';
+  let pin = '';
+  let camera = '';
+
+  beforeAll(async () => {
+    if (!HAVE_FFMPEG) return;
+    const { data: user } = await organizer.auth.getUser();
+    const { data: org } = await organizer.from('organizations')
+      .select('id').eq('owner_id', user.user!.id).limit(1).single();
+    const { data: b } = await organizer.from('ballots').insert({
+      org_id: org!.id, slug: uniqueSlug('scanpin'), title: 'Scanned In',
+      status: 'live', mode: 'open',
+    }).select('id').single();
+    ballot = b!.id;
+
+    await organizer.from('questions_yes_no').insert({
+      ballot_id: ballot, prompt: 'Carry the motion', sort_order: 1, gate_open: true,
+    });
+
+    const minted = await organizer.rpc('issue_tokens', { p_ballot: ballot, p_count: 1 });
+    pin = (minted.data as Array<{ pin: string }>)[0]!.pin;
+
+    camera = `${tmpdir()}/votingstation-voterbar-${Date.now()}.y4m`;
+    await fakeBarcodeCamera(pin, camera);
+  });
+
+  afterAll(async () => {
+    if (!HAVE_FFMPEG) return;
+    if (camera) await rm(camera, { force: true });
+    if (ballot) await organizer.from('ballots').delete().eq('id', ballot);
+  });
+
+  test('scans the barcode and is let onto the floor', async () => {
+    if (!HAVE_FFMPEG) return;
+    const browser = await browserWatching(camera);
+    const page = await browser.newPage();
+    await page.setViewport({ width: 420, height: 900 });
+
+    await page.goto(`${origin}/#/vote/${ballot}`, { waitUntil: 'networkidle0' });
+    await page.waitForSelector('.pin-entry', { timeout: 15000 });
+
+    // typing is still the first thing offered; scanning is the other way
+    await clickByText(page, 'button', 'Scan my slip instead');
+    await waitForText(page, 'Carry the motion', 40000);
+
+    // it went in on the scanned PIN, and the digits are not left on the screen
+    const text = await page.evaluate(() => document.body.innerText);
+    expect(text).not.toContain(pin);
+    expect(await page.$('.pin-entry')).toBeNull();
+
+    await browser.close();
+  }, 90000);
+
+  test('the camera and its decoders are not in the first load', async () => {
+    if (!HAVE_FFMPEG) return;
+    const browser = await browserWatching(camera);
+    const page = await browser.newPage();
+    const scripts: string[] = [];
+    page.on('response', (r) => {
+      if (r.url().endsWith('.js')) scripts.push(r.url());
+    });
+
+    await page.goto(`${origin}/#/vote/${ballot}`, { waitUntil: 'networkidle0' });
+    await page.waitForSelector('.pin-entry', { timeout: 15000 });
+
+    const weight = async (urls: string[]) => {
+      let total = 0;
+      for (const u of urls) total += (await (await fetch(u)).text()).length;
+      return total;
+    };
+    const beforeBytes = await weight(scripts);
+
+    await clickByText(page, 'button', 'Scan my slip instead');
+    await waitForText(page, 'Carry the motion', 40000);
+
+    // the decoders are several hundred kB; a PIN screen must not carry them
+    const afterBytes = await weight(scripts);
+    expect(afterBytes - beforeBytes).toBeGreaterThan(200_000);
+
+    await browser.close();
+  }, 90000);
+});

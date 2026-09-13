@@ -16,7 +16,7 @@
  * renders what it is told -- including the refreshed state that comes back with
  * every receipt, so the page is never a round trip behind the meeting.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import * as api from '../lib/api';
 import { useBallotId, type Address } from '../lib/resolve';
 import { DEFAULT_BACKSTOP_MS, useBallotWatch } from '../lib/watch';
@@ -27,6 +27,13 @@ import type {
   Refused, VoterState,
 } from '../lib/types';
 import { Banner, Card, Empty, Pill, Rail, Spinner } from '../components/ui';
+
+/**
+ * The camera and its two decoders, which are a large thing to carry for a
+ * screen whose whole job is six digits. They arrive only if the voter asks to
+ * scan rather than type.
+ */
+const PinScanner = lazy(() => import('../components/PinScanner'));
 import { QuestionTally } from './Results';
 
 export function Vote({ pin, ...address }: Address & { pin?: string }) {
@@ -166,7 +173,7 @@ function Ballot({ ballotId, carried }: { ballotId: string; carried?: string }) {
           <ClosedResults results={closedResults} />
         ) : !state ? (
           <PinScreen ballot={ballot} pin={pin} busy={busy}
-                     onPin={setPin} onSubmit={() => void refresh()} />
+                     onPin={setPin} onSubmit={(typed) => void refresh(typed)} />
         ) : (
           <Floor
             state={state}
@@ -219,8 +226,34 @@ function ClosedResults({ results }: { results: BallotResults }) {
 
 function PinScreen({ ballot, pin, busy, onPin, onSubmit }: {
   ballot: Ballot; pin: string; busy: boolean;
-  onPin: (v: string) => void; onSubmit: () => void;
+  onPin: (v: string) => void;
+  /** The PIN to use, when it is one the voter did not type into the box. */
+  onSubmit: (pin?: string) => void;
 }) {
+  const [scanning, setScanning] = useState(false);
+
+  /*
+   * A scanned PIN is submitted on the spot rather than dropped into the box for
+   * the voter to press a button under. They have already said what they want by
+   * pointing the camera at it, and a slip held up to a phone is a slip held up
+   * in a room -- the less time the digits are on screen, the better.
+   */
+  const scanned = (found: string) => {
+    setScanning(false);
+    onPin(found);
+    onSubmit(found);
+  };
+
+  if (scanning) {
+    return (
+      <Card>
+        <Suspense fallback={<Spinner label="Opening the camera" />}>
+          <PinScanner onFound={scanned} onCancel={() => setScanning(false)} />
+        </Suspense>
+      </Card>
+    );
+  }
+
   return (
     <Card>
       <p>{ballot.intro_message}</p>
@@ -242,6 +275,13 @@ function PinScreen({ ballot, pin, busy, onPin, onSubmit }: {
           {busy ? 'Checking…' : 'Open my ballot'}
         </button>
       </form>
+
+      {/* Second, so a voter who just wants to type is not asked to decide
+          first, and so the submit above stays the page's obvious button. */}
+      <button type="button" className="ghost block" style={{ marginTop: 10 }}
+              onClick={() => setScanning(true)}>
+        Scan my slip instead
+      </button>
     </Card>
   );
 }
