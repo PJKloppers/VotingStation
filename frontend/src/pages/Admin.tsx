@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import * as api from '../lib/api';
-import { href, navigate } from '../lib/router';
+import { appBase, href, navigate } from '../lib/router';
 import type { Ballot, Organization, OrganizationImage } from '../lib/types';
 import { encodeQr, QUIET, qrPath, type QrCode } from '../lib/qr';
 import { slugify } from '../lib/slug';
@@ -601,7 +601,7 @@ function NewBallot({ orgId, orgSlug, count, cap, onDone, onRefused }: {
  * on nothing.
  */
 export function AdminLinks({ ballot }: { ballot: Ballot }) {
-  const base = `${window.location.origin}${window.location.pathname}`;
+  const base = appBase();
   const voteUrl = `${base}${href(`/vote/${ballot.id}`)}`;
   const [projecting, setProjecting] = useState(false);
   // a few thousand field operations; not slow, but it has no reason to run

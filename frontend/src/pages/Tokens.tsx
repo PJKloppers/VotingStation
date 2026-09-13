@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import * as api from '../lib/api';
 import type { TokenReport, TokenRow } from '../lib/types';
 import { encodeQr, QUIET, qrPath, type QrCode } from '../lib/qr';
-import { href } from '../lib/router';
+import { appBase, href } from '../lib/router';
 import { Banner, Card, Check, Field, Pill, Spinner } from '../components/ui';
 
 /** Slips to a printed page. The stylesheet lays out this many rows. */
@@ -222,6 +222,30 @@ export function Tokens({ ballotId, ballotTitle }: { ballotId: string; ballotTitl
  * damaged code. The patch below covers roughly 5% of the area, well inside
  * that -- and the printed result is decoded in the test rather than assumed.
  */
+/**
+ * The PIN as a code of its own, on the right of every slip.
+ *
+ * The big code points at the ballot, and only carries the PIN when the
+ * organizer has asked it to. This one always carries the PIN and nothing else,
+ * so a door scanner reads the six digits off any slip whichever way that
+ * setting is left. Six digits is a version 1 code -- the smallest there is --
+ * which is why it scans at this size.
+ *
+ * No mark in the middle: the organizer's logo is decoration on a code a person
+ * points a phone at, and this is the one a machine has to get right first time.
+ */
+function PinCode({ code }: { code: QrCode }) {
+  const span = code.size + QUIET * 2;
+  return (
+    <svg className="slip-pin-code" shapeRendering="crispEdges"
+         viewBox={`0 0 ${span} ${span}`}
+         role="img" aria-label="The PIN, as a code">
+      <rect width="100%" height="100%" fill="#fff" />
+      <path d={qrPath(code)} fill="#000" />
+    </svg>
+  );
+}
+
 function QrWithMark({ code, mark }: { code: QrCode; mark: string | null }) {
   const span = code.size + QUIET * 2;
   const patch = span * 0.22;
@@ -255,7 +279,7 @@ function PrintSheet({ ballotId, title, tokens, mark, slugs, embedPin }: {
   // The readable form, because a slip is read by a person and typed by one.
   // The uuid is the fallback for a draft, whose slugs are not resolvable yet.
   const path = slugs ? `/vote/${slugs.org}/${slugs.ballot}` : `/vote/${ballotId}`;
-  const base = `${window.location.origin}${window.location.pathname}${href(path)}`;
+  const base = `${appBase()}${href(path)}`;
   const live = tokens.filter((t) => t.status === 'active');
 
   /*
@@ -276,14 +300,26 @@ function PrintSheet({ ballotId, title, tokens, mark, slugs, embedPin }: {
   const gauge = shared ?? encodeQr(`${base}?pin=000000`);
   const inkRatio = gauge ? gauge.size / (gauge.size + QUIET * 2) : 1;
 
+  // The PIN's code carries six digits, so it is a version 1 symbol whatever the
+  // PIN is -- the smallest there is, and the one whose four-module quiet zone
+  // is the largest share of its own box. Given the same width as the big code
+  // it would print visibly smaller. Scaled by the ratio of the two fractions,
+  // the three squares across a slip end up the same size in ink.
+  const pinGauge = encodeQr('000000');
+  const pinInkRatio = pinGauge ? pinGauge.size / (pinGauge.size + QUIET * 2) : 1;
+
   return (
     <div className="print-sheet" aria-hidden="true"
-         style={{ ['--mark-scale' as string]: String(inkRatio) }}>
+         style={{
+           ['--mark-scale' as string]: String(inkRatio),
+           ['--pin-scale' as string]: String(inkRatio / pinInkRatio),
+         }}>
       {sheets.map((sheet, i) => (
         <div key={i} className={`print-page${i === sheets.length - 1 ? ' last' : ''}`}>
       {sheet.map((t) => {
         const url = embedPin ? `${base}?pin=${t.pin}` : base;
         const code = shared ?? encodeQr(url);
+        const pinCode = encodeQr(t.pin);
         return (
         <div key={t.id} className="slip">
           {/* Black on white regardless of theme: a scanner wants dark modules
@@ -297,6 +333,8 @@ function PrintSheet({ ballotId, title, tokens, mark, slugs, embedPin }: {
           </div>
           {/* The mark balances the code across the slip, at the same size. */}
           {mark ? <img className="slip-mark" src={mark} alt="" /> : null}
+          {/* Rightmost, and on every slip: the PIN as a code in its own right. */}
+          {pinCode ? <PinCode code={pinCode} /> : null}
         </div>
         );
       })}

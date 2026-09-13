@@ -53,6 +53,30 @@ export function href(path: string): string {
 }
 
 /**
+ * Where the app itself lives: everything before the fragment.
+ *
+ * Not simply `origin + pathname`. A path route is served by `404.html`, so
+ * reaching the privacy page and then clicking into the app leaves the address
+ * bar reading `/privacy-and-terms-of-service#/admin` -- the fragment moves,
+ * the path does not. Anything that built an absolute URL out of `pathname`
+ * from then on carried that document's path with it: the voting links, the QR
+ * code printed on every slip, and the URL OAuth is told to come back to.
+ *
+ * So the route segment comes off, and what is left is the app's own base.
+ */
+export function appBase(): string {
+  const { origin, pathname } = window.location;
+  const segments = pathname.split('/');
+  const last = segments[segments.length - 1];
+  // Untouched unless a route is actually there: the path may legitimately end
+  // in a file name, and a slash after `index.html` addresses nothing.
+  if (!last || !PATH_ROUTES.includes(last)) return `${origin}${pathname}`;
+  segments.pop();
+  const path = segments.join('/');
+  return `${origin}${path.endsWith('/') ? path : `${path}/`}`;
+}
+
+/**
  * A link to one of the path routes above, as a path rather than a fragment.
  *
  * Relative, so the browser resolves it against the document it is in -- which

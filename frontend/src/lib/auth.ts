@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
-import { navigate } from './router';
+import { appBase, navigate } from './router';
 import { supabase } from './supabase';
 
 /**
@@ -15,7 +15,7 @@ import { supabase } from './supabase';
  * which is a dashboard setting.
  */
 export function oauthReturnUrl(): string {
-  return `${window.location.origin}${window.location.pathname}`;
+  return appBase();
 }
 
 /**

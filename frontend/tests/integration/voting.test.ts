@@ -1129,6 +1129,81 @@ describe('deleting a PIN', () => {
       .select('id', { count: 'exact', head: true }).eq('ballot_id', scratchBallot);
     expect(count).toBeGreaterThan(0);
   });
+
+  /*
+   * The three above are one question type on an anonymous ballot. The trigger
+   * works by recomputing the voter key from the ballot and the PIN, which is
+   * the only thing that can work on both kinds -- token_id is null on an
+   * anonymous ballot, so a foreign key cascade would have missed exactly the
+   * ballots that most need the row gone. Both kinds, all three types, and the
+   * superseded rows a changed vote leaves behind.
+   */
+  for (const anonymous of [true, false]) {
+    test(`every type goes, superseded rows included (anonymous: ${anonymous})`, async () => {
+      const { data: b } = await organizer.from('ballots').insert({
+        org_id: orgId, slug: uniqueSlug('delall'), title: 'Deleting a PIN',
+        status: 'live', mode: 'open', anonymous, allow_vote_change: true,
+      }).select('id').single();
+      const ballot = b!.id;
+
+      const { data: yn } = await organizer.from('questions_yes_no')
+        .insert({ ballot_id: ballot, prompt: 'Motion', sort_order: 1, gate_open: true })
+        .select('id').single();
+      const { data: out } = await organizer.from('questions_highest_outright')
+        .insert({ ballot_id: ballot, prompt: 'Chair', sort_order: 2, gate_open: true })
+        .select('id').single();
+      const { data: hx } = await organizer.from('questions_highest_x')
+        .insert({ ballot_id: ballot, prompt: 'Committee', sort_order: 3, gate_open: true,
+                  winner_count: 1, select_max: 1 })
+        .select('id').single();
+
+      const { data: outOpts } = await organizer.from('options_highest_outright')
+        .insert([{ question_id: out!.id, label: 'Ann', sort_order: 1 },
+                 { question_id: out!.id, label: 'Bob', sort_order: 2 }]).select('id');
+      const { data: hxOpts } = await organizer.from('options_highest_x')
+        .insert([{ question_id: hx!.id, label: 'Cyd', sort_order: 1 },
+                 { question_id: hx!.id, label: 'Dee', sort_order: 2 }]).select('id');
+
+      const minted = await call<Array<{ pin: string }>>(organizer, 'issue_tokens',
+        { p_ballot: ballot, p_count: 2 });
+      const [doomed, kept] = [minted[0]!.pin, minted[1]!.pin];
+
+      // the doomed PIN answers all three, and changes its mind on the motion so
+      // there is a superseded row to leave behind
+      await call(voter, 'cast_yes_no', { p_ballot: ballot, p_pin: doomed, p_question: yn!.id, p_choice: 'no', p_fingerprint: 'fp-a' });
+      await call(voter, 'cast_yes_no', { p_ballot: ballot, p_pin: doomed, p_question: yn!.id, p_choice: 'yes', p_fingerprint: 'fp-a' });
+      await call(voter, 'cast_highest_outright', { p_ballot: ballot, p_pin: doomed, p_question: out!.id, p_option: outOpts![0]!.id, p_abstain: false, p_fingerprint: 'fp-a' });
+      await call(voter, 'cast_highest_x', { p_ballot: ballot, p_pin: doomed, p_question: hx!.id, p_options: [hxOpts![0]!.id], p_fingerprint: 'fp-a' });
+      await call(voter, 'cast_yes_no', { p_ballot: ballot, p_pin: kept, p_question: yn!.id, p_choice: 'yes', p_fingerprint: 'fp-b' });
+      await call(voter, 'cast_highest_outright', { p_ballot: ballot, p_pin: kept, p_question: out!.id, p_option: outOpts![1]!.id, p_abstain: false, p_fingerprint: 'fp-b' });
+      await call(voter, 'cast_highest_x', { p_ballot: ballot, p_pin: kept, p_question: hx!.id, p_options: [hxOpts![1]!.id], p_fingerprint: 'fp-b' });
+
+      const total = async () => {
+        const one = async (table: string) => (await organizer.from(table)
+          .select('id', { count: 'exact', head: true }).eq('ballot_id', ballot)).count ?? 0;
+        return await one('votes_yes_no') + await one('votes_highest_outright')
+             + await one('votes_highest_x');
+      };
+
+      // four for the doomed PIN -- two on the motion, one each on the others --
+      // and three for the one that stays
+      expect(await total()).toBe(7);
+
+      const { data: tok } = await organizer.from('ballot_tokens')
+        .select('id').eq('ballot_id', ballot).eq('pin', doomed).single();
+      const { error } = await organizer.from('ballot_tokens').delete().eq('id', tok!.id);
+      expect(error).toBeNull();
+
+      expect(await total()).toBe(3);
+
+      // and the tally is the other voter's answers alone
+      const tally = await call<{ questions: Array<{ tally: Record<string, unknown> }> }>(
+        organizer, 'ballot_results', { p_ballot: ballot });
+      expect(tally.questions[0]!.tally).toMatchObject({ yes: 1, no: 0 });
+
+      await organizer.from('ballots').delete().eq('id', ballot);
+    });
+  }
 });
 
 describe('disabling a PIN that has already voted', () => {

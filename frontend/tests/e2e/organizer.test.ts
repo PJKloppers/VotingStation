@@ -812,3 +812,123 @@ describe('putting the PIN in the code', () => {
     await page.close();
   });
 });
+
+test('a link handed out does not carry the privacy page with it', async () => {
+  /*
+   * The privacy page answers to a real path, served by 404.html. So reaching
+   * it and then clicking into the app leaves the address bar reading
+   * `/privacy-and-terms-of-service#/manage/<id>`: the fragment moved, the path
+   * did not. Every absolute URL the app builds used to start from
+   * `location.pathname`, so from that moment the voting link it showed -- and
+   * the address encoded into the QR on every printed slip -- pointed at the
+   * privacy document.
+   */
+  const page = await signedInPage();
+
+  const linksFrom = async (start: string, then?: string) => {
+    await page.goto(start, { waitUntil: 'networkidle0' });
+    if (then) {
+      await page.evaluate((h) => { window.location.hash = h; }, then);
+      await page.waitForFunction((h) => window.location.hash === h, {}, then);
+    }
+    await waitForText(page, 'Links');
+    await clickByText(page, 'button', 'Links');
+    await page.waitForSelector('.share-url', { timeout: 15000 });
+    return page.$$eval('.share-url',
+      (n) => n.map((e) => (e as HTMLElement).innerText.replace(/\s+/g, '')));
+  };
+
+  const direct = await linksFrom(`${origin}/#/manage/${createdBallotId}`);
+  const viaDocument = await linksFrom(
+    `${origin}/privacy-and-terms-of-service`, `#/manage/${createdBallotId}`);
+
+  // the path really is still the document's -- otherwise this proves nothing
+  expect(await page.evaluate(() => window.location.pathname))
+    .toBe('/privacy-and-terms-of-service');
+
+  expect(direct.length).toBeGreaterThan(0);
+  expect(viaDocument).toEqual(direct);
+  for (const url of viaDocument) expect(url).not.toContain('privacy-and-terms-of-service');
+
+  await page.close();
+});
+
+test('every slip carries the PIN as a code of its own, whatever the QR is set to', async () => {
+  /*
+   * The big code points at the ballot, and carries the PIN only when the
+   * organizer has asked it to. This one always carries the PIN and nothing
+   * else, so a scanner at the door reads the six digits off any slip either
+   * way. Decoded here rather than assumed: it is drawn by our own encoder, and
+   * six digits is a version 1 symbol, which is the smallest and coarsest of
+   * the three squares on a slip.
+   */
+  const { data: user } = await organizer.auth.getUser();
+  const { data: org } = await organizer.from('organizations')
+    .select('id').eq('owner_id', user.user!.id).limit(1).single();
+  const { data: b } = await organizer.from('ballots').insert({
+    org_id: org!.id, slug: uniqueSlug('pincode'), title: 'PIN code slips', status: 'draft',
+  }).select('id').single();
+  const ballot = b!.id;
+  const minted = await organizer.rpc('issue_tokens', { p_ballot: ballot, p_count: 3 });
+  const pins = (minted.data as Array<{ pin: string }>).map((t) => t.pin);
+
+  const page = await signedInPage();
+  await page.setViewport({ width: 900, height: 900, deviceScaleFactor: 3 });
+  await page.goto(`${origin}/#/manage/${ballot}`, { waitUntil: 'networkidle0' });
+  await clickByText(page, 'button', 'PINs');
+  await page.waitForSelector('table tbody tr', { timeout: 15000 });
+  await page.evaluate(() => { window.print = () => {}; });
+
+  const readPinCodes = async () => {
+    await page.waitForFunction(
+      () => document.querySelectorAll('.slip-pin-code').length === 3, { timeout: 15000 });
+    await page.emulateMediaType('print');
+    const out: string[] = [];
+    for (const code of await page.$$('.slip-pin-code')) {
+      const png = PNG.sync.read(Buffer.from(await code.screenshot({ encoding: 'binary' }) as Buffer));
+      out.push(jsQR(new Uint8ClampedArray(png.data), png.width, png.height)?.data ?? '(nothing)');
+    }
+    await page.emulateMediaType(undefined);
+    return out;
+  };
+
+  // with the setting off, which is how it loads
+  await clickByText(page, 'button', 'Print slips');
+  expect((await readPinCodes()).sort()).toEqual([...pins].sort());
+
+  // and with it on, when the big code carries the PIN as well
+  await clickByText(page, 'label', 'Put the PIN in the code as well');
+  expect((await readPinCodes()).sort()).toEqual([...pins].sort());
+
+  // it is the last thing across the slip, and the three squares match in size.
+  // measured on paper: the sheet is display:none on screen, so every rectangle
+  // is zero unless print media is the one in force.
+  await page.emulateMediaType('print');
+  const geometry = await page.evaluate(() => {
+    const slip = document.querySelector('.slip')!;
+    // the dark part, not the box: an SVG's viewBox includes the code's quiet
+    // zone -- four blank modules a side -- and the two codes hold different
+    // amounts, so the same box would print them at different sizes.
+    const box = (sel: string) => {
+      const el = slip.querySelector(sel) as SVGSVGElement | null;
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      const span = el.viewBox.baseVal.width;
+      return { right: Math.round(r.right), ink: (r.width * (span - 8)) / span };
+    };
+    return {
+      children: [...slip.children].map((c) => c.getAttribute('class') ?? ''),
+      qr: box('.slip-qr'), pin: box('.slip-pin-code'),
+      slipRight: Math.round(slip.getBoundingClientRect().right),
+    };
+  });
+  await page.emulateMediaType(undefined);
+
+  expect(geometry.children[geometry.children.length - 1]).toContain('slip-pin-code');
+  expect(geometry.pin!.right).toBeGreaterThan(geometry.qr!.right);
+  // the boxes differ on purpose; what has to match is the ink inside them
+  expect(Math.abs(geometry.pin!.ink - geometry.qr!.ink)).toBeLessThanOrEqual(2);
+
+  await organizer.from('ballots').delete().eq('id', ballot);
+  await page.close();
+});
