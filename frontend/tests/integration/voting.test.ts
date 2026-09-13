@@ -1631,3 +1631,77 @@ describe('the internal helpers are not part of the API', () => {
     expect(results.questions.map((q) => q.id)).not.toContain(motionId);
   });
 });
+
+describe('a named ballot does not publish its PINs', () => {
+  /*
+   * `app_voter_key` is `'pin:' || p_pin` when a ballot is not anonymous, and
+   * the vote tables' read policy opens every row of a question once it
+   * publishes. The PIN is the credential that casts the vote, so publishing it
+   * let anyone answer that ballot's other open questions as that voter.
+   *
+   * The row stays public -- that is what a published result is. Only the
+   * column goes, and it goes by grant rather than by policy, so no filter can
+   * ask for it.
+   */
+  let namedBallot = '';
+  let namedQuestion = '';
+  let namedPin = '';
+
+  beforeAll(async () => {
+    const { data: b } = await organizer.from('ballots')
+      .insert({ org_id: orgId, slug: uniqueSlug('named'), title: 'A named ballot',
+                status: 'live', mode: 'gated', anonymous: false, results_public: true })
+      .select('id').single();
+    namedBallot = b!.id;
+
+    const { data: q } = await organizer.from('questions_yes_no')
+      .insert({ ballot_id: namedBallot, prompt: 'Shall we?', sort_order: 1 })
+      .select('id').single();
+    namedQuestion = q!.id;
+
+    const minted = await organizer.rpc('issue_tokens', { p_ballot: namedBallot, p_count: 1 });
+    namedPin = (minted.data as Array<{ pin: string }>)[0]!.pin;
+
+    await call(organizer, 'set_gate', {
+      p_ballot: namedBallot, p_type: 'yes_no', p_question: namedQuestion,
+      p_open: true, p_only: true,
+    });
+    await call(voter, 'cast_yes_no', {
+      p_ballot: namedBallot, p_pin: namedPin, p_question: namedQuestion,
+      p_choice: 'yes', p_fingerprint: 'fp-named',
+    });
+    // the chair closes the gate, so the question publishes
+    await call(organizer, 'close_all_gates', { p_ballot: namedBallot });
+  });
+
+  afterAll(async () => {
+    await organizer.from('ballots').delete().eq('id', namedBallot);
+  });
+
+  test('the published row cannot hand back the PIN', async () => {
+    const { data, error } = await voter.from('votes_yes_no')
+      .select('voter_key').eq('question_id', namedQuestion);
+    expect(error).not.toBeNull();
+    expect(data).toBeNull();
+  });
+
+  test('nor can the organizer who owns it -- this is a grant, not a policy', async () => {
+    const { error } = await organizer.from('votes_yes_no')
+      .select('voter_key').eq('question_id', namedQuestion);
+    expect(error).not.toBeNull();
+  });
+
+  test('but the result itself is still public', async () => {
+    const { data, error } = await voter.from('votes_yes_no')
+      .select('id, choice').eq('question_id', namedQuestion);
+    expect(error).toBeNull();
+    expect(data!.map((r) => r.choice)).toEqual(['yes']);
+  });
+
+  test('and the tally still counts it', async () => {
+    const results = await call<{ questions: Array<{ id: string; tally: { yes: number } }> }>(
+      voter, 'ballot_results', { p_ballot: namedBallot },
+    );
+    expect(results.questions.find((q) => q.id === namedQuestion)!.tally.yes).toBe(1);
+  });
+});

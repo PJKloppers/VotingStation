@@ -198,8 +198,10 @@ export function PrivacyAndTerms() {
           On a ballot where anonymity has been turned off, the vote is deliberately
           attributable: the row records the id of the PIN that cast it, and the pseudonym
           column holds the plain text <code>pin:</code> followed by the six digits. A named
-          vote being named is the point of the setting — but read{' '}
-          <Anchor to="limits">known limits</Anchor> before you use it.
+          vote being named is the point of the setting. That pseudonym column is not
+          readable through the API by anyone — see <Anchor to="limits">known limits</Anchor>{' '}
+          for what that fixed — so what a reader of a named ballot can follow is the
+          opaque id of the PIN, not the PIN.
         </p>
         <p>
           <strong>Anonymity cannot be changed once a vote exists.</strong> The database
@@ -286,19 +288,23 @@ export function PrivacyAndTerms() {
       </Section>
 
       <Section id="limits">
-        <div className="doc-callout warn">
-          <h3>A named ballot that publishes results publishes its PINs</h3>
+        <div className="doc-callout">
+          <h3>A named ballot used to publish its PINs. It no longer does.</h3>
           <p>
             On a ballot with anonymity turned off, the pseudonym column holds{' '}
-            <code>pin:</code> and the six digits — and that column is part of the rows that
-            become publicly readable once the question finishes. Anyone can read them. If
-            other questions on the same ballot are still open, a PIN read that way can be
-            used to vote on them.
+            <code>pin:</code> and the six digits, and that column was part of the rows that
+            become publicly readable once a question finishes — so anyone could read a
+            PIN back out, and use it to vote on any question of that ballot still open.
           </p>
           <p>
-            Until this is fixed: leave ballots anonymous, which is the default, or turn off
-            publishing results on a ballot that is not. This is a defect rather than a
-            design, and it is written here because you should be able to learn it from us.
+            The anonymous and signed-in roles now hold no permission on that column at all,
+            on any of the three vote tables. Because that is a grant rather than a rule
+            about rows, no query can ask for it — not a voter’s, not an organizer’s. The
+            rows stay public, the counts are unchanged, and a named vote is still tied to
+            its voter across the ballot’s questions by an opaque id that is not a
+            credential. It is recorded here because it was true of ballots run before it
+            was fixed: a PIN printed on a slip for such a ballot should be treated as
+            known.
           </p>
         </div>
 
