@@ -182,7 +182,7 @@ function Outright({ tally }: { tally: OutrightTally }) {
         {headline}
       </p>
       {tally.options.map((o) => (
-        <Bar key={o.id} label={o.label} votes={o.votes} share={o.share}
+        <Bar key={o.id} label={o.label} votes={o.votes ?? 0} share={o.share ?? 0}
              tone={o.id === tally.winner ? 'won' : o.votes === 0 ? 'lost' : ''} />
       ))}
       <p className="faint" style={{ marginTop: 'auto', paddingTop: 10 }}>
@@ -203,9 +203,11 @@ function HighestX({ tally }: { tally: HighestXTally }) {
       {tally.tied_at_cut
         ? <Banner kind="info">Tied at the cut-off — the last seat is not decided.</Banner>
         : null}
+      {/* The monitor reads as the owner, so a count is always there -- the null
+          is only ever the public shape of this same type. */}
       <div style={{ marginTop: tally.tied_at_cut ? 12 : 0 }}>
         {tally.options.map((o) => (
-          <Bar key={o.id} label={o.label} votes={o.votes} share={o.share}
+          <Bar key={o.id} label={o.label} votes={o.votes ?? 0} share={o.share ?? 0}
                tone={o.elected ? 'won' : o.votes === 0 ? 'lost' : ''} />
         ))}
       </div>

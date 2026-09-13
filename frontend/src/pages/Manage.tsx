@@ -446,8 +446,8 @@ function Settings({ ballot, onSaved }: { ballot: Ballot; onSaved: () => void }) 
         <Check label="Publish the results once voting closes" checked={v('results_public')}
                onChange={(x) => set('results_public', x)}
                help="While the ballot is live the tally is yours alone either way. Off keeps it private after it closes too." />
-        <Field label="Auto-reload the waiting screen"
-               help="Seconds. Leave at 0 for a large meeting — two hundred phones polling every ten seconds is twenty calls a second.">
+        <Field label="How often to check, as a backstop"
+               help="Seconds. The waiting screen is told the moment a gate moves, so this only covers a connection that has quietly died. 0 uses the default of 20 seconds.">
           <input type="number" min={0} max={3600} value={v('lobby_refresh_seconds')}
                  onChange={(e) => set('lobby_refresh_seconds', Number(e.target.value))} />
         </Field>

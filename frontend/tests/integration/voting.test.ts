@@ -29,6 +29,14 @@ const call = async <T>(client: SupabaseClient, fn: string, args: Record<string, 
 
 type Answer = { ok: boolean; error?: string; state?: unknown; message?: string };
 
+type HighestXShape = {
+  redacted?: boolean;
+  total: number | null;
+  voters: number;
+  winner_count: number;
+  options: Array<{ label: string; votes: number | null; rank: number | null; share: number | null }>;
+};
+
 beforeAll(async () => {
   organizer = await organizerClient();
   voter = anonClient();
@@ -694,6 +702,124 @@ describe('reaching a ballot by its slugs', () => {
     expect(clash).not.toBeNull();     // but not twice on the same ballot
 
     await organizer.from('ballots').delete().eq('id', other!.id);
+  });
+});
+
+describe('a public X-of-N result is seats, not a league table', () => {
+  // Published in full it is a ranking of everyone who stood, with the losers'
+  // counts beside their names. The outcome is who took the seats.
+  let scratch = '';
+  let question = '';
+  let elected: string[] = [];
+
+  beforeAll(async () => {
+    const { data: b } = await organizer.from('ballots').insert({
+      org_id: orgId, slug: uniqueSlug('seats'), title: 'Seats',
+      status: 'live', mode: 'gated', results_public: true,
+    }).select('id').single();
+    scratch = b!.id;
+
+    const { data: q } = await organizer.from('questions_highest_x').insert({
+      ballot_id: scratch, prompt: 'Elect two', sort_order: 1,
+      select_min: 1, select_max: 2, winner_count: 2,
+    }).select('id').single();
+    question = q!.id;
+
+    const { data: opts } = await organizer.from('options_highest_x')
+      .insert(['Ann', 'Ben', 'Cara', 'Dan', 'Eve'].map((label, i) => ({
+        question_id: question, label, sort_order: i,
+      })))
+      .select('id, label');
+
+    await call(organizer, 'set_gate', {
+      p_ballot: scratch, p_type: 'highest_x', p_question: question,
+      p_open: true, p_only: true,
+    });
+
+    const minted = await call<Array<{ pin: string }>>(organizer, 'issue_tokens', {
+      p_ballot: scratch, p_count: 3,
+    });
+    const id = (label: string) => opts!.find((o) => o.label === label)!.id;
+
+    // Ann and Ben take the seats; Cara, Dan and Eve do not.
+    for (const [pin, picks] of [
+      [minted[0]!.pin, ['Ann', 'Ben']],
+      [minted[1]!.pin, ['Ann', 'Ben']],
+      [minted[2]!.pin, ['Ann', 'Cara']],
+    ] as Array<[string, string[]]>) {
+      await call<Answer>(voter, 'cast_highest_x', {
+        p_ballot: scratch, p_pin: pin, p_question: question,
+        p_options: picks.map(id), p_fingerprint: `fp-seat-${pin}`,
+      });
+    }
+    elected = ['Ann', 'Ben'];
+    await call(organizer, 'close_all_gates', { p_ballot: scratch });
+  });
+
+  afterAll(async () => {
+    if (scratch) await organizer.from('ballots').delete().eq('id', scratch);
+  });
+
+  const tallyFor = async (client: SupabaseClient) => {
+    const r = await call<{ questions: Array<{ tally: HighestXShape }> }>(
+      client, 'ballot_results', { p_ballot: scratch });
+    return r.questions[0]!.tally;
+  };
+
+  test('the public gets the elected and nobody else', async () => {
+    const t = await tallyFor(voter);
+    expect(t.redacted).toBe(true);
+    expect(t.options.map((o) => o.label).sort()).toEqual(elected);
+    for (const name of ['Cara', 'Dan', 'Eve']) {
+      expect(t.options.map((o) => o.label)).not.toContain(name);
+    }
+  });
+
+  test('with no counts on them at all', async () => {
+    const t = await tallyFor(voter);
+    expect(t.total).toBeNull();
+    for (const o of t.options) {
+      expect(o.votes).toBeNull();
+      expect(o.rank).toBeNull();
+      expect(o.share).toBeNull();
+    }
+  });
+
+  test('turnout is still public, because that is not a ranking', async () => {
+    const t = await tallyFor(voter);
+    expect(t.voters).toBe(3);
+    expect(t.winner_count).toBe(2);
+  });
+
+  test('the order is not the ranking by another name', async () => {
+    // Ann leads Ben on the real count, so a fixed order would put her first
+    // every time. Over enough reads a shuffle will not.
+    const firsts = new Set<string>();
+    for (let i = 0; i < 25; i++) {
+      const t = await tallyFor(voter);
+      firsts.add(t.options[0]!.label);
+      if (firsts.size > 1) break;
+    }
+    expect(firsts.size).toBeGreaterThan(1);
+  });
+
+  test('the owner still sees the whole thing', async () => {
+    const t = await tallyFor(organizer);
+    expect(t.redacted).toBeUndefined();
+    expect(t.options.map((o) => o.label).sort()).toEqual(['Ann', 'Ben', 'Cara', 'Dan', 'Eve']);
+    expect(t.options.find((o) => o.label === 'Ann')!.votes).toBe(3);
+  });
+
+  test('a yes/no result is untouched -- its numbers are the point of it', async () => {
+    const { data: q } = await organizer.from('questions_yes_no').insert({
+      ballot_id: scratch, prompt: 'Adopt it', sort_order: 2,
+    }).select('id').single();
+
+    const r = await call<{ questions: Array<{ type: string; tally: { redacted?: boolean } }> }>(
+      voter, 'ballot_results', { p_ballot: scratch });
+    const motion = r.questions.find((x) => x.type === 'yes_no')!;
+    expect(motion.tally.redacted).toBeUndefined();
+    void q;
   });
 });
 

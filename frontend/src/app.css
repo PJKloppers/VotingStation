@@ -121,31 +121,36 @@ a  { color: var(--accent); text-underline-offset: 3px; }
   font-family: var(--sans); font-size: 0.78rem; font-weight: 700;
   align-self: center;
 }
-.topbar .brand-block { display: flex; flex-direction: column; gap: 1px; }
-.topbar .brand-repo {
-  /* line up under the wordmark, clearing the 26px badge + 9px gap */
-  margin-left: 35px;
-  font-size: 0.72rem; line-height: 1.3;
-  color: var(--ink-faint); text-decoration: none;
-}
-.topbar .brand-repo:hover { color: var(--ink-soft); text-decoration: underline; }
-.topbar nav { margin-left: auto; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.topbar nav a, .topbar nav button {
-  font-size: 0.9rem; padding: 7px 11px; border-radius: 8px;
-  color: var(--ink-soft); text-decoration: none;
-  background: none; border: 0; cursor: pointer; font-family: inherit;
-}
-.topbar nav a:hover, .topbar nav button:hover { background: var(--surface-2); color: var(--ink); }
-.topbar nav a[aria-current="page"] { background: var(--accent-wash); color: var(--accent-strong); }
-
 main { flex: 1; width: 100%; max-width: 940px; margin: 0 auto; padding: 28px 20px 72px; }
 main.narrow { max-width: 560px; }
 
 footer.site {
   border-top: 1px solid var(--rule);
-  padding: 18px 20px; text-align: center;
-  color: var(--ink-faint); font-size: 0.82rem;
+  padding: 18px 20px;
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+  color: var(--ink-faint); font-size: 0.82rem; text-align: center;
 }
+footer.site .site-note { margin: 0; }
+
+/* GitHub's own pill, in this app's colours rather than GitHub's -- the
+   hard-coded greys of the original are unreadable on a dark ground. */
+.github-pill {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 4px 11px 4px 9px;
+  font-size: 0.78rem; font-weight: 600; line-height: 1.5;
+  color: var(--ink-soft); text-decoration: none;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  transition: background 150ms ease, border-color 150ms ease, color 150ms ease;
+}
+.github-pill:hover {
+  background: var(--surface-2);
+  border-color: var(--ink-faint);
+  color: var(--ink);
+}
+.github-icon { display: flex; align-items: center; }
+.github-icon svg { display: block; }
 
 /* ---------------------------------------------------------------- pieces */
 
@@ -361,6 +366,39 @@ label.check input { width: 20px; height: 20px; margin: 2px 0 0; accent-color: va
   overflow: hidden; margin: 6px 0 2px;
 }
 .progress-rail > i { display: block; height: 100%; background: var(--accent); border-radius: 99px; }
+
+/* ------------------------------------------------------- waiting, quietly
+   The page keeps itself current, so this says so. A pulsing dot, not a
+   spinner: a spinner reads as "something is stuck", and nothing is. */
+
+.waiting {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: 0.85rem; color: var(--ink-soft); white-space: nowrap;
+  margin: 12px 0 0;
+}
+.waiting-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--carried);
+  animation: waiting-pulse 2.4s ease-in-out infinite;
+}
+@keyframes waiting-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+@media (prefers-reduced-motion: reduce) {
+  .waiting-dot { animation: none; }
+}
+
+/* A public seat list: names, not a table. Deliberately unranked and unnumbered
+   so the markup cannot imply an order the result does not have. */
+.seats {
+  list-style: none; margin: 0 0 4px; padding: 0;
+  display: flex; flex-wrap: wrap; gap: 8px;
+}
+.seats li {
+  font-family: var(--serif); font-size: 1.05rem; font-weight: 600;
+  color: var(--carried);
+  background: color-mix(in srgb, var(--carried) 10%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--carried) 30%, transparent);
+  border-radius: var(--radius); padding: 6px 12px;
+}
 
 /* -------------------------------------------------------------- results */
 

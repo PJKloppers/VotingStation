@@ -19,6 +19,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import * as api from '../lib/api';
 import { useBallotId, type Address } from '../lib/resolve';
+import { DEFAULT_BACKSTOP_MS, useBallotWatch } from '../lib/watch';
 import { minimumPicks, selectionError, type HighestXConfig } from '../lib/rules';
 import { navigate } from '../lib/router';
 import type {
@@ -108,14 +109,23 @@ function Ballot({ ballotId, carried }: { ballotId: string; carried?: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ballotId, carried]);
 
-  // Optional auto-reload. Left at 0 for a big meeting: two hundred phones
-  // polling every ten seconds is twenty calls a second.
-  const every = state?.ballot.lobby_refresh_seconds ?? 0;
-  useEffect(() => {
-    if (!state || every <= 0) return;
-    const id = setInterval(() => { void refresh(); }, every * 1000);
-    return () => clearInterval(id);
-  }, [state, every, refresh]);
+  /*
+   * The page keeps itself current: the chair opening a gate pushes an update,
+   * and a slow poll, a tab waking and the network returning all cover the
+   * socket having quietly died in someone's pocket.
+   *
+   * Watching starts with the ballot, not with the sign-in, because subscribing
+   * takes a second or two and anything that moves in that window is never
+   * delivered. Starting while the voter is still typing their PIN means the
+   * socket is already listening by the time they are in. Until then there is
+   * nothing to ask for, so the callback waits.
+   *
+   * A ballot may still name its own backstop; 0 means the default.
+   */
+  const named = (state?.ballot.lobby_refresh_seconds ?? 0) * 1000;
+  useBallotWatch(ballotId, () => { if (pin.length === 6) void refresh(); }, {
+    backstopMs: named > 0 ? named : DEFAULT_BACKSTOP_MS,
+  });
 
   if (loading) return <main className="narrow"><Spinner label="Opening the ballot" /></main>;
 
@@ -146,7 +156,6 @@ function Ballot({ ballotId, carried }: { ballotId: string; carried?: string }) {
             ballotId={ballotId}
             pin={pin}
             busy={busy}
-            onReload={() => void refresh()}
             onAnswered={apply}
             onExit={exit}
           />
@@ -189,9 +198,8 @@ function PinScreen({ ballot, pin, busy, onPin, onSubmit }: {
 
 /* ---------------------------------------------------------------- the floor */
 
-function Floor({ state, ballotId, pin, busy, onReload, onAnswered, onExit }: {
+function Floor({ state, ballotId, pin, busy, onAnswered, onExit }: {
   state: VoterState; ballotId: string; pin: string; busy: boolean;
-  onReload: () => void;
   onAnswered: (next: VoterState | Refused) => boolean;
   onExit: () => void;
 }) {
@@ -208,9 +216,11 @@ function Floor({ state, ballotId, pin, busy, onReload, onAnswered, onExit }: {
             </p>
             <strong>{progress.voted} of {progress.total} answered</strong>
           </div>
-          <button className="ghost small" onClick={onReload} disabled={busy}>
-            {busy ? 'Checking…' : 'Reload'}
-          </button>
+          {/* Says the page is current, rather than offering to make it so. */}
+          <span className="waiting" aria-live="polite">
+            <span className="waiting-dot" aria-hidden="true" />
+            {busy ? 'Checking…' : 'Up to date'}
+          </span>
         </div>
         <Rail value={progress.total ? progress.voted / progress.total : 0} />
       </Card>
@@ -218,10 +228,13 @@ function Floor({ state, ballotId, pin, busy, onReload, onAnswered, onExit }: {
       {questions.length === 0 ? (
         <Card>
           <Empty>{ballot.waiting_message}</Empty>
-          <button className="primary block" onClick={onReload} disabled={busy}
-                  style={{ marginTop: 14 }}>
-            {busy ? 'Checking…' : 'Reload'}
-          </button>
+          {/* No button: the page is told when a gate opens, so there is nothing
+              for a voter to do but wait, and a button that does nothing they
+              are not already getting is a button that invites doubt. */}
+          <p className="waiting" aria-live="polite">
+            <span className="waiting-dot" aria-hidden="true" />
+            This page will open the question by itself.
+          </p>
         </Card>
       ) : (
         <>

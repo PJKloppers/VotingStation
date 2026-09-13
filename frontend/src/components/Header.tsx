@@ -11,20 +11,10 @@ import { href } from '../lib/router';
 export function Header({ session, at }: { session: boolean; at: string | undefined }) {
   return (
     <header className="topbar">
-      <div className="brand-block">
-        <a className="brand" href={href('/')}>
-          <span className="mark" aria-hidden="true">VS</span>
-          VotingStation
-        </a>
-        <a
-          className="brand-repo"
-          href="https://github.com/PJKloppers/VotingStation"
-          target="_blank"
-          rel="noreferrer"
-        >
-          github.com/PJKloppers/VotingStation
-        </a>
-      </div>
+      <a className="brand" href={href('/')}>
+        <span className="mark" aria-hidden="true">VS</span>
+        VotingStation
+      </a>
       <nav>
         <a href={href('/')} aria-current={at === undefined ? 'page' : undefined}>Scan</a>
         {session ? (
@@ -41,14 +31,5 @@ export function Header({ session, at }: { session: boolean; at: string | undefin
         )}
       </nav>
     </header>
-  );
-}
-
-/** The line at the foot of every page. */
-export function Footer() {
-  return (
-    <footer className="site">
-      Token voting for organizations · each question publishes when its gate closes
-    </footer>
   );
 }

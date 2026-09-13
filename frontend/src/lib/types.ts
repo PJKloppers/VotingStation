@@ -205,9 +205,10 @@ export interface CountedOption {
   id: string;
   label: string;
   description: string;
-  votes: number;
+  /** Null on a public X-of-N result: the seats are shown, the counts are not. */
+  votes: number | null;
   rank: number | null;
-  share: number;
+  share: number | null;
   elected?: boolean;
 }
 
@@ -223,7 +224,13 @@ export interface OutrightTally {
 }
 
 export interface HighestXTally {
-  total: number;
+  /**
+   * True when this is the public view: the elected only, in a random order,
+   * with no counts. An X-of-N result published in full is a league table of
+   * everyone who stood.
+   */
+  redacted?: boolean;
+  total: number | null;
   voters: number;
   submissions: number;
   winner_count: number;

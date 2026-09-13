@@ -166,7 +166,7 @@ function Outright({ tally }: { tally: OutrightTally }) {
           : null}
       </div>
       {tally.options.map((o) => (
-        <Bar key={o.id} label={o.label} votes={o.votes} share={o.share}
+        <Bar key={o.id} label={o.label} votes={o.votes ?? 0} share={o.share ?? 0}
              tone={o.id === tally.winner ? 'won' : o.votes === 0 ? 'lost' : ''} />
       ))}
       <p className="faint" style={{ marginTop: 8 }}>
@@ -178,6 +178,36 @@ function Outright({ tally }: { tally: OutrightTally }) {
 
 function HighestX({ tally }: { tally: HighestXTally }) {
   const elected = tally.options.filter((o: CountedOption) => o.elected);
+
+  /*
+   * The public sees who took the seats and nothing else -- no counts, no
+   * also-rans, and in the order the database shuffled them into, because
+   * listing them by votes would be the ranking again by other means.
+   */
+  if (tally.redacted) {
+    return (
+      <>
+        <p className="faint" style={{ marginBottom: 6 }}>
+          {tally.winner_count} elected, of {tally.voters} voting
+        </p>
+        {elected.length === 0
+          ? <p className="outcome none">No result yet</p>
+          : <ul className="seats">
+              {elected.map((o) => <li key={o.id}>{o.label}</li>)}
+            </ul>}
+        {tally.tied_at_cut
+          ? <Banner kind="info">
+              The vote is tied at the cut-off. The last seat is not decided by this count.
+            </Banner>
+          : null}
+        <p className="faint" style={{ marginTop: 10 }}>
+          Listed in no particular order. Counts are not published for this kind of
+          question.
+        </p>
+      </>
+    );
+  }
+
   return (
     <>
       <p className="faint" style={{ marginBottom: 6 }}>Top {tally.winner_count} elected</p>
@@ -191,7 +221,7 @@ function HighestX({ tally }: { tally: HighestXTally }) {
         : null}
       <div style={{ marginTop: 12 }}>
         {tally.options.map((o) => (
-          <Bar key={o.id} label={o.label} votes={o.votes} share={o.share}
+          <Bar key={o.id} label={o.label} votes={o.votes ?? 0} share={o.share ?? 0}
                tone={o.elected ? 'won' : o.votes === 0 ? 'lost' : ''} />
         ))}
       </div>

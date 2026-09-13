@@ -133,19 +133,17 @@ describe('the voter', () => {
     const board = await page.evaluate(() => document.body.innerText);
     expect(board).not.toContain('Carried');
 
-    // The chair closes it, and the count appears further down the same page.
+    // The chair closes it, and the count appears further down the same page --
+    // on its own, with nothing pressed.
     await organizer.rpc('close_all_gates', { p_ballot: ballotId });
-    await clickByText(page, 'button', 'Reload');
     await waitForText(page, 'Carried');
 
     await organizer.rpc('set_gate', {
       p_ballot: ballotId, p_type: 'yes_no', p_question: motionId, p_open: true, p_only: true,
     });
-    await clickByText(page, 'button', 'Reload');
     await waitForText(page, 'Answered');
 
     await organizer.from('ballots').update({ allow_vote_change: false }).eq('id', ballotId);
-    await clickByText(page, 'button', 'Reload');
     await waitForText(page, 'You have already voted on this question');
     const stillOffered = await page.$$eval('button',
       (nodes) => nodes.some((n) => n.innerText.trim() === 'Submit my vote'));
@@ -166,7 +164,6 @@ describe('the voter', () => {
       p_ballot: ballotId, p_type: 'highest_outright', p_question: chairId, p_open: true, p_only: true,
     });
 
-    await clickByText(page, 'button', 'Reload');
     await waitForText(page, 'Elect the chair');
     const text = await page.evaluate(() => document.body.innerText);
     expect(text).not.toContain('Adopt the minutes');
@@ -409,6 +406,79 @@ describe('the header', () => {
     });
     expect(covered).toBe(true);
 
+    await page.close();
+  });
+});
+
+describe('the waiting screen', () => {
+  test('opens the question by itself, with nothing pressed', async () => {
+    await organizer.rpc('close_all_gates', { p_ballot: ballotId });
+
+    const page = await newPage();
+    await page.goto(`${origin}/#/vote/${ballotId}`, { waitUntil: 'networkidle0' });
+    await enterPin(page, pins[1]!);
+    await clickByText(page, 'button', 'Open my ballot');
+    await waitForText(page, 'will open the question by itself');
+
+    // Nothing to press, so prove there is nothing to press.
+    const buttons = await page.$$eval('button', (n) => n.map((b) => b.innerText.trim()));
+    expect(buttons).not.toContain('Reload');
+
+    // The chair opens a gate from somewhere else entirely.
+    await organizer.rpc('set_gate', {
+      p_ballot: ballotId, p_type: 'yes_no', p_question: motionId, p_open: true, p_only: true,
+    });
+
+    // Well inside the 20s backstop, so this is the push doing it.
+    await page.waitForFunction(
+      () => document.body.innerText.includes('Adopt the minutes'),
+      { timeout: 8000, polling: 200 },
+    );
+    await page.close();
+  });
+
+  test('and takes the question away again when the gate closes', async () => {
+    const page = await newPage();
+    await page.goto(`${origin}/#/vote/${ballotId}`, { waitUntil: 'networkidle0' });
+    await enterPin(page, pins[1]!);
+    await clickByText(page, 'button', 'Open my ballot');
+    await waitForText(page, 'Adopt the minutes');
+
+    await organizer.rpc('close_all_gates', { p_ballot: ballotId });
+
+    // Gone from what can be answered -- the prompt itself may well still be on
+    // the page, further down, if this voter answered it and the count is now
+    // theirs to see. So the claim is that it is no longer answerable.
+    await page.waitForFunction(
+      () => !document.body.innerText.includes('Submit my vote')
+         && !document.body.innerText.includes('Choose an answer'),
+      { timeout: 8000, polling: 200 },
+    );
+    await waitForText(page, 'will open the question by itself');
+    await page.close();
+  });
+
+  test('a phone that was asleep catches up when it wakes', async () => {
+    const page = await newPage();
+    await page.goto(`${origin}/#/vote/${ballotId}`, { waitUntil: 'networkidle0' });
+    await enterPin(page, pins[1]!);
+    await clickByText(page, 'button', 'Open my ballot');
+    await waitForText(page, 'will open the question by itself');
+
+    // Hide the tab, which is where a socket quietly dies in a pocket.
+    const cdp = await page.createCDPSession();
+    await cdp.send('Emulation.setPageVisibilityOverride' as never, { visible: false } as never)
+      .catch(() => {});
+    await organizer.rpc('set_gate', {
+      p_ballot: ballotId, p_type: 'yes_no', p_question: motionId, p_open: true, p_only: true,
+    });
+    await cdp.send('Emulation.setPageVisibilityOverride' as never, { visible: true } as never)
+      .catch(() => {});
+
+    await page.waitForFunction(
+      () => document.body.innerText.includes('Adopt the minutes'),
+      { timeout: 25000, polling: 200 },
+    );
     await page.close();
   });
 });

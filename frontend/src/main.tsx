@@ -4,7 +4,8 @@ import './app.css';
 
 import { useSession } from './lib/auth';
 import { parseRoute, useRoute } from './lib/router';
-import { Footer, Header } from './components/Header';
+import { Footer } from './components/Footer';
+import { Header } from './components/Header';
 import { Admin } from './pages/Admin';
 import { Home } from './pages/Home';
 import { Organization } from './pages/Organization';
