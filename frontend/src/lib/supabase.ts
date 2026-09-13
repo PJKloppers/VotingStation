@@ -14,5 +14,17 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
     persistSession: true,
     autoRefreshToken: true,
     storageKey: 'votingstation.auth',
+    /*
+     * OAuth comes back through PKCE, not the implicit flow.
+     *
+     * supabase-js still defaults to `implicit`, which hands the session back
+     * in the URL *fragment* -- and the fragment is this app's router. The
+     * return would arrive as a route reading `access_token=...`, drawing
+     * "there is no page at ..." until the library cleared the hash out from
+     * under it. PKCE puts a `?code=` in the query string instead, which
+     * `useRoute` never looks at, so the route survives the round trip by
+     * construction rather than by winning a race.
+     */
+    flowType: 'pkce',
   },
 });

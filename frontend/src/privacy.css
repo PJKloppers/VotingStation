@@ -1,0 +1,220 @@
+/* ==========================================================================
+   The privacy and terms document.
+   ...........................................................................
+   Everything else in this app is a control someone is about to press: cards,
+   buttons, one decision a screen. This is prose, read once, at length, and
+   probably by somebody who did not want to be reading it -- so it gets a
+   measure, a larger body size and room between the lines rather than the card
+   styling the rest of the app is built from. Same tokens throughout, so it
+   follows the theme like everything else.
+   ========================================================================== */
+
+.doc {
+  /* ~68 characters at this size. The app's 940px would be a wall of text. */
+  max-width: 47rem;
+  font-size: 1.0625rem;
+  line-height: 1.72;
+  counter-reset: doc-section;
+}
+
+/* Long links and the odd column name must not push the page sideways at
+   400px, where there is nothing to spare. */
+.doc { overflow-wrap: anywhere; }
+.doc p, .doc li { hyphens: auto; }
+
+/* ------------------------------------------------------------------- head */
+
+.doc-head {
+  padding-bottom: 26px;
+  margin-bottom: 8px;
+  border-bottom: 2px solid var(--rule);
+}
+.doc-head h1 { font-size: 2.2rem; margin: 4px 0 12px; text-wrap: balance; }
+.doc-head .lede { font-size: 1.1rem; line-height: 1.6; margin-bottom: 14px; }
+.doc-meta {
+  color: var(--ink-faint);
+  font-size: 0.82rem;
+  line-height: 1.6;
+  margin: 0;
+}
+
+/* -------------------------------------------------------------------- toc */
+
+.doc-toc {
+  margin: 26px 0 8px;
+  padding: 18px 20px;
+  background: var(--surface-2);
+  border-radius: var(--radius-lg);
+}
+.doc-toc h2 {
+  font-family: var(--sans);
+  font-size: 0.72rem; font-weight: 700; letter-spacing: 0.09em;
+  text-transform: uppercase; color: var(--ink-faint);
+  margin-bottom: 10px;
+}
+.doc-toc ol {
+  counter-reset: doc-toc;
+  list-style: none;
+  margin: 0; padding: 0;
+  /* Two columns where there is room; one on a phone, where a second column
+     would be four characters wide. */
+  columns: 2;
+  column-gap: 28px;
+  font-size: 0.95rem;
+}
+/* Flex rather than a marker, so a title that wraps hangs under itself rather
+   than under its own number. */
+.doc-toc li {
+  display: flex; gap: 0.3em;
+  break-inside: avoid;
+  margin-bottom: 6px;
+}
+.doc-toc li::before {
+  counter-increment: doc-toc;
+  content: counter(doc-toc) ".";
+  flex: none;
+  min-width: 1.5em;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+.doc-toc a { text-decoration: none; }
+.doc-toc a:hover { text-decoration: underline; }
+
+@media (max-width: 560px) {
+  .doc-toc ol { columns: 1; }
+}
+
+/* --------------------------------------------------------------- sections */
+
+.doc-section { margin-top: 42px; }
+.doc-section > h2 {
+  font-size: 1.5rem;
+  margin-bottom: 16px;
+  padding-top: 18px;
+  border-top: 1px solid var(--rule-soft);
+  text-wrap: balance;
+}
+/* Numbered, because a document people have to refer to needs a way to say
+   which part they mean. The counter is on the markup order, so the list above
+   and the headings below cannot drift apart. */
+.doc-section > h2::before {
+  counter-increment: doc-section;
+  content: counter(doc-section) ".";
+  display: block;
+  font-family: var(--sans);
+  font-size: 0.72rem; font-weight: 700; letter-spacing: 0.09em;
+  color: var(--ink-faint);
+  margin-bottom: 2px;
+}
+.doc-section h3 {
+  font-size: 1.05rem;
+  margin: 26px 0 8px;
+}
+
+.doc p { margin: 0 0 1em; }
+.doc strong { font-weight: 700; }
+
+/* A term at the head of its own paragraph, which is most of the terms
+   section: the point of each clause should be readable by skimming the bold. */
+.doc-section p > strong:first-child { color: var(--ink); }
+
+.doc ul {
+  margin: 0 0 1.2em;
+  padding-left: 1.25em;
+}
+.doc li { margin-bottom: 0.55em; }
+.doc li::marker { color: var(--ink-faint); }
+
+.doc a { text-underline-offset: 3px; }
+
+.doc code {
+  font-family: var(--mono);
+  font-size: 0.88em;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--surface-2);
+  color: var(--ink-soft);
+}
+
+/* ----------------------------------------------------------------- callout */
+
+/* The things that are awkward to say. Set apart so they cannot be skimmed
+   past as more of the same prose -- which is the whole reason for writing
+   them down. */
+.doc-callout {
+  margin: 0 0 1.4em;
+  padding: 16px 18px;
+  border-left: 4px solid var(--accent);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  background: var(--accent-wash);
+}
+.doc-callout.warn {
+  border-left-color: var(--defeated);
+  /* No wash token for this colour, so mix one from the page's own surface --
+     it lands right in both themes without a second pair of hex values. */
+  background: color-mix(in srgb, var(--defeated) 9%, var(--surface));
+}
+.doc-callout > :last-child { margin-bottom: 0; }
+.doc-callout h3 { margin-top: 0; }
+
+/* ------------------------------------------------------------- placeholder */
+
+/* Something a person still has to fill in. Marked as such rather than guessed
+   at, because a plausible invented address is worse than an obvious gap. */
+.doc-todo {
+  display: block;
+  margin: 0 0 1.4em;
+  padding: 10px 14px;
+  border: 1px dashed var(--rule);
+  border-radius: var(--radius);
+  color: var(--ink-soft);
+  font-size: 0.92rem;
+  font-style: italic;
+}
+
+/* ------------------------------------------------------------------- facts */
+
+/* The retention list. A table would need a horizontal scroller at 400px; this
+   is two columns where there is room and stacked pairs where there is not. */
+.doc-facts {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+  gap: 0;
+  margin: 0 0 1.4em;
+  border-top: 1px solid var(--rule-soft);
+  font-size: 0.97rem;
+}
+.doc-facts dt,
+.doc-facts dd {
+  margin: 0;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--rule-soft);
+}
+.doc-facts dt { font-weight: 600; padding-right: 20px; }
+.doc-facts dd { color: var(--ink-soft); }
+
+@media (max-width: 560px) {
+  .doc-facts { grid-template-columns: minmax(0, 1fr); border-top: 0; }
+  .doc-facts dt { padding: 14px 0 0; border-bottom: 0; }
+  .doc-facts dd { padding: 2px 0 14px; }
+}
+
+/* -------------------------------------------------------------------- foot */
+
+.doc-foot {
+  margin-top: 46px;
+  padding-top: 22px;
+  border-top: 2px solid var(--rule);
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  color: var(--ink-faint);
+  font-size: 0.88rem;
+}
+
+/* --------------------------------------------------------------- narrower */
+
+@media (max-width: 460px) {
+  .doc { font-size: 1rem; }
+  .doc-head h1 { font-size: 1.75rem; }
+  .doc-section > h2 { font-size: 1.3rem; }
+  .doc-toc { padding: 16px; }
+}

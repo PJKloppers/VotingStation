@@ -121,6 +121,18 @@ a  { color: var(--accent); text-underline-offset: 3px; }
   font-family: var(--sans); font-size: 0.78rem; font-weight: 700;
   align-self: center;
 }
+
+/* The links sit at the far end of the bar, spaced -- without this they run
+   together into one word, which is what happened when the pill moved out. */
+.topbar nav { margin-left: auto; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.topbar nav a, .topbar nav button {
+  font-size: 0.9rem; padding: 7px 11px; border-radius: 8px;
+  color: var(--ink-soft); text-decoration: none;
+  background: none; border: 0; cursor: pointer; font-family: inherit;
+}
+.topbar nav a:hover, .topbar nav button:hover { background: var(--surface-2); color: var(--ink); }
+.topbar nav a[aria-current="page"] { background: var(--accent-wash); color: var(--accent-strong); }
+
 main { flex: 1; width: 100%; max-width: 940px; margin: 0 auto; padding: 28px 20px 72px; }
 main.narrow { max-width: 560px; }
 
@@ -131,6 +143,18 @@ footer.site {
   color: var(--ink-faint); font-size: 0.82rem; text-align: center;
 }
 footer.site .site-note { margin: 0; }
+
+/* The footer's own row -- the document link beside the GitHub pill. These live
+   here, not in the document's stylesheet, because the footer is on every page
+   and must not depend on that page's CSS having been loaded. */
+.site-links {
+  display: flex; align-items: center; justify-content: center;
+  gap: 16px; flex-wrap: wrap;
+}
+/* Quieter than the pill it sits beside: one of the two is a destination and
+   the other is a footnote. */
+.doc-link { color: var(--ink-faint); text-underline-offset: 3px; }
+.doc-link:hover { color: var(--ink-soft); }
 
 /* GitHub's own pill, in this app's colours rather than GitHub's -- the
    hard-coded greys of the original are unreadable on a dark ground. */
@@ -214,6 +238,23 @@ button.danger:hover { background: color-mix(in srgb, var(--defeated) 12%, transp
 button.small, .btn.small { font-size: 0.85rem; padding: 6px 11px; min-height: 34px; }
 
 button.block, .btn.block { width: 100%; }
+
+/* google's button, in this page's surfaces rather than the brand sheet's fixed
+   white -- #fff on #747775 is a foreign object on a dark ground, and it is the
+   mark people recognise, not the box around it. the mark keeps its own four
+   colours in both themes, which is the part the guidance is firm about. */
+button.google { background: var(--surface); border-color: var(--ink-faint); }
+button.google:hover:not(:disabled) { background: var(--surface-2); border-color: var(--ink-soft); }
+button.google .g { width: 18px; height: 18px; flex: none; }
+
+/* a rule with a word in it. the two ways in are alternatives, not a list, so a
+   heading would overstate what is only a fork between one form and one button. */
+.or {
+  display: flex; align-items: center; gap: 12px;
+  margin: 16px 0; color: var(--ink-faint);
+  font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em;
+}
+.or::before, .or::after { content: ''; flex: 1; height: 1px; background: var(--rule); }
 
 /* ---------------------------------------------------------------- fields */
 

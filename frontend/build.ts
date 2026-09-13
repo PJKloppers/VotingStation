@@ -93,7 +93,12 @@ for (const icon of manifest.icons as Array<{ src: string }>) {
 }
 
 // GitHub Pages serves 404.html for unknown paths. Ours is the app itself, so a
-// deep link that skips the hash still lands somewhere useful.
+// deep link that skips the hash still lands somewhere useful -- and it is what
+// makes /privacy-and-terms-of-service a real path rather than a fragment, which
+// is what a Google OAuth reviewer has to be given. The router reads the route
+// back off location.pathname; see lib/router.ts. Written without a trailing
+// slash on purpose: publicPath is './', so the route must stay one segment deep
+// off the deploy root or the asset paths resolve a directory too far down.
 await Bun.write('dist/404.html', await Bun.file('dist/index.html').text());
 // Pages runs Jekyll otherwise, which drops files beginning with an underscore.
 await Bun.write('dist/.nojekyll', '');

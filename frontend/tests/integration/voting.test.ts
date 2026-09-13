@@ -1582,3 +1582,52 @@ describe('a draft ballot', () => {
     await organizer.from('ballots').update({ status: 'live' }).eq('id', ballotId);
   });
 });
+
+describe('the internal helpers are not part of the API', () => {
+  /*
+   * `app_settled_results` is SECURITY DEFINER and takes the ballot as a
+   * composite by value, so every publicity check it makes reads an argument the
+   * caller supplies. While it still carried Postgres's default grant it was a
+   * published RPC, and an anonymous caller who sent a made-up row -- a real
+   * ballot's id, status 'closed' -- was handed the tally of a live, gated
+   * question whose gate was still open.
+   *
+   * Both of these are reached only from other SECURITY DEFINER functions, which
+   * run as the definer, so the grant they need is none at all.
+   */
+  const forged = {
+    b: { id: ballotId, status: 'closed', mode: 'open', show_results_after: true },
+    p_voter_key: `pin:${pins[0]!}`,
+  };
+
+  test('an anonymous caller cannot reach app_settled_results', async () => {
+    const { error } = await voter.rpc('app_settled_results', forged);
+    expect(error?.message ?? '').toContain('permission denied');
+  });
+
+  test('nor can a signed-in organizer', async () => {
+    const { error } = await organizer.rpc('app_settled_results', forged);
+    expect(error?.message ?? '').toContain('permission denied');
+  });
+
+  test('nor app_question_settled, which is the gate check itself', async () => {
+    const { error } = await voter.rpc('app_question_settled', {
+      b: { id: ballotId, status: 'closed', mode: 'open' }, p_gate_open: true,
+    });
+    expect(error?.message ?? '').toContain('permission denied');
+  });
+
+  test('and the supported path still answers, still withholding the open one', async () => {
+    await organizer.from('ballots').update({ status: 'live' }).eq('id', ballotId);
+    await call(organizer, 'set_gate', {
+      p_ballot: ballotId, p_type: 'yes_no', p_question: motionId, p_open: true, p_only: true,
+    });
+
+    const results = await call<{
+      withheld: number; questions: Array<{ id: string }>;
+    }>(voter, 'ballot_results', { p_ballot: ballotId });
+
+    expect(results.withheld).toBeGreaterThan(0);
+    expect(results.questions.map((q) => q.id)).not.toContain(motionId);
+  });
+});

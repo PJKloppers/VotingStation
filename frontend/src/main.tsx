@@ -11,6 +11,7 @@ import { Home } from './pages/Home';
 import { Organization } from './pages/Organization';
 import { Live } from './pages/Live';
 import { Manage } from './pages/Manage';
+import { PrivacyAndTerms } from './pages/PrivacyAndTerms';
 import { Results } from './pages/Results';
 import { SignIn } from './pages/SignIn';
 import { Vote } from './pages/Vote';
@@ -43,6 +44,9 @@ function App() {
       case 'o':
         // Where a code carrying a single slug lands.
         return first ? <Organization orgSlug={first} /> : <Home />;
+      case 'privacy-and-terms-of-service':
+        // Also reachable at this path without the fragment -- see lib/router.ts.
+        return <PrivacyAndTerms />;
       case 'signin':
         return <SignIn />;
       case 'admin':
