@@ -931,3 +931,58 @@ test('every slip carries the PIN as a code of its own, whatever the QR is set to
   await organizer.from('ballots').delete().eq('id', ballot);
   await page.close();
 });
+
+test('an organization can be deleted from its settings, and takes its ballots', async () => {
+  /*
+   * The control is last in the modal and behind an arming click, and it asks
+   * for the name to be typed -- the same price the dashboard puts on a
+   * published ballot, and this is every ballot at once.
+   */
+  const { data: user } = await organizer.auth.getUser();
+  const { data: org } = await organizer.from('organizations')
+    .insert({ owner_id: user.user!.id, slug: uniqueSlug('binme'), name: 'Bin Me Society' })
+    .select('id').single();
+  const doomed = org!.id;
+  await organizer.from('ballots').insert({
+    org_id: doomed, slug: uniqueSlug('binb'), title: 'Ballot in a doomed org', status: 'draft',
+  });
+
+  const page = await signedInPage();
+  await page.goto(`${origin}/#/admin`, { waitUntil: 'networkidle0' });
+  await waitForText(page, 'Bin Me Society');
+
+  // the settings button on this organization's card, not another's
+  await page.evaluate((name) => {
+    const card = [...document.querySelectorAll('.org-card, .card')]
+      .find((c) => (c as HTMLElement).innerText.includes(name))!;
+    ([...card.querySelectorAll('button')] as HTMLButtonElement[])
+      .find((b) => b.innerText.trim() === 'Settings')!.click();
+  }, 'Bin Me Society');
+
+  await waitForText(page, 'Delete this organization');
+  await clickByText(page, 'button', 'Delete Bin Me Society');
+
+  // it says what is about to go, counted rather than guessed
+  await waitForText(page, 'its 1 ballot');
+
+  const confirm = await page.waitForSelector('input[name="confirm_org"]', { timeout: 15000 });
+  // the wrong name does not arm it
+  await confirm!.type('Bin Me');
+  expect(await page.$eval('.ballot-confirm .btn-danger',
+    (b) => (b as HTMLButtonElement).disabled)).toBe(true);
+
+  await page.$eval('input[name="confirm_org"]', (el) => { (el as HTMLInputElement).value = ''; });
+  await confirm!.type('Bin Me Society');
+  await clickByText(page, 'button', 'Delete for good');
+
+  await page.waitForFunction(
+    (name) => !document.body.innerText.includes(name), { timeout: 20000 }, 'Bin Me Society');
+
+  const { data: left } = await organizer.from('organizations').select('id').eq('id', doomed);
+  expect(left ?? []).toHaveLength(0);
+  const { count } = await organizer.from('ballots')
+    .select('id', { count: 'exact', head: true }).eq('org_id', doomed);
+  expect(count).toBe(0);
+
+  await page.close();
+}, 90000);

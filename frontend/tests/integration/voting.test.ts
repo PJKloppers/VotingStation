@@ -8,7 +8,9 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { anonClient, organizerClient, otherOrganizerClient, uniqueSlug } from '../helpers/env';
+import {
+  anonClient, organizerClient, otherOrganizerClient, SUPABASE_URL, uniqueSlug,
+} from '../helpers/env';
 
 let organizer: SupabaseClient;
 let voter: SupabaseClient;
@@ -1778,5 +1780,131 @@ describe('a named ballot does not publish its PINs', () => {
       voter, 'ballot_results', { p_ballot: namedBallot },
     );
     expect(results.questions.find((q) => q.id === namedQuestion)!.tally.yes).toBe(1);
+  });
+});
+
+describe('deleting an organization', () => {
+  /*
+   * One delete, and the database walks the rest: ballots, and under each its
+   * questions, PINs and votes; then the mark's row, whose own trigger takes the
+   * object out of the bucket.
+   *
+   * Done as the organizer through the ordinary client, because that is the only
+   * way to find out whether the policies allow it and whether the trigger fires
+   * for a caller who is not the owner of storage. It is also the case that broke
+   * first: storage refuses direct deletes, so the first version of the trigger
+   * did not merely fail to remove the file -- it stopped the organization from
+   * being deleted at all.
+   */
+  let victim = '';
+  let victimBallot = '';
+  let markPath = '';
+
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64',
+  );
+
+  beforeAll(async () => {
+    const { data: user } = await organizer.auth.getUser();
+    const { data: org } = await organizer.from('organizations')
+      .insert({ owner_id: user.user!.id, slug: uniqueSlug('doomed'), name: 'Doomed Society' })
+      .select('id').single();
+    victim = org!.id;
+
+    const { data: b } = await organizer.from('ballots').insert({
+      org_id: victim, slug: uniqueSlug('doomedb'), title: 'Doomed ballot',
+      status: 'live', mode: 'open',
+    }).select('id').single();
+    victimBallot = b!.id;
+
+    const { data: q } = await organizer.from('questions_yes_no').insert({
+      ballot_id: victimBallot, prompt: 'Carry it', sort_order: 1, gate_open: true,
+    }).select('id').single();
+
+    const minted = await organizer.rpc('issue_tokens', { p_ballot: victimBallot, p_count: 2 });
+    const pin = (minted.data as Array<{ pin: string }>)[0]!.pin;
+    await organizer.rpc('cast_yes_no', {
+      p_ballot: victimBallot, p_pin: pin, p_question: q!.id,
+      p_choice: 'yes', p_fingerprint: 'fp-doomed',
+    });
+
+    // and a mark, uploaded the way the app uploads one
+    markPath = `${victim}/${crypto.randomUUID()}.png`;
+    await organizer.storage.from('org-logos')
+      .upload(markPath, png, { contentType: 'image/png', upsert: true });
+    await organizer.from('organization_images').insert({
+      org_id: victim, kind: 'logo', bucket: 'org-logos', path: markPath,
+      content_type: 'image/png', bytes: png.length,
+    });
+  });
+
+  const counts = async () => ({
+    orgs: (await organizer.from('organizations')
+      .select('id', { count: 'exact', head: true }).eq('id', victim)).count ?? 0,
+    ballots: (await organizer.from('ballots')
+      .select('id', { count: 'exact', head: true }).eq('org_id', victim)).count ?? 0,
+    questions: (await organizer.from('questions_yes_no')
+      .select('id', { count: 'exact', head: true }).eq('ballot_id', victimBallot)).count ?? 0,
+    tokens: (await organizer.from('ballot_tokens')
+      .select('id', { count: 'exact', head: true }).eq('ballot_id', victimBallot)).count ?? 0,
+    votes: (await organizer.from('votes_yes_no')
+      .select('id', { count: 'exact', head: true }).eq('ballot_id', victimBallot)).count ?? 0,
+    images: (await organizer.from('organization_images')
+      .select('id', { count: 'exact', head: true }).eq('org_id', victim)).count ?? 0,
+  });
+
+  test('it is all really there first', async () => {
+    // otherwise the assertions below pass on an organization that was empty
+    expect(await counts()).toEqual({
+      orgs: 1, ballots: 1, questions: 1, tokens: 2, votes: 1, images: 1,
+    });
+  });
+
+  test('and the mark is a file a stranger can fetch', async () => {
+    const url = `${SUPABASE_URL}/storage/v1/object/public/org-logos/${markPath}`;
+    expect((await fetch(url)).status).toBe(200);
+  });
+
+  /*
+   * Through storage's own listing, not the public URL. Those are served from a
+   * cache that goes on answering for a while after the object is gone -- the
+   * first version of this test read 200 from it well after the row had been
+   * deleted, which says something about the cache and nothing about the file.
+   */
+  const stillInBucket = async () => {
+    const folder = markPath.split('/')[0]!;
+    const { data } = await organizer.storage.from('org-logos').list(folder);
+    return (data ?? []).some((f) => `${folder}/${f.name}` === markPath);
+  };
+
+  test('and the bucket lists it, so the check below is not a vacuous one', async () => {
+    expect(await stillInBucket()).toBe(true);
+  });
+
+  test('one delete takes the ballots, the PINs, the votes and the mark', async () => {
+    const { error } = await organizer.from('organizations').delete().eq('id', victim);
+    expect(error).toBeNull();
+
+    expect(await counts()).toEqual({
+      orgs: 0, ballots: 0, questions: 0, tokens: 0, votes: 0, images: 0,
+    });
+  });
+
+  test('and the file behind the mark is gone from the bucket', async () => {
+    expect(await stillInBucket()).toBe(false);
+  });
+
+  test('someone else\'s organization is refused', async () => {
+    const { data: mine } = await organizer.from('organizations').select('id').limit(1).single();
+    const other = await otherOrganizerClient();
+    await other.from('organizations').delete().eq('id', mine!.id);
+
+    // PostgREST reports no error when a policy simply matches nothing, so the
+    // check is whether the row is still there.
+    const { data: still } = await organizer.from('organizations')
+      .select('id').eq('id', mine!.id).maybeSingle();
+    expect(still).not.toBeNull();
+    await other.auth.signOut();
   });
 });

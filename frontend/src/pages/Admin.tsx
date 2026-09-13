@@ -216,7 +216,104 @@ function OrgSettings({ org, open, onClose, onSaved }: {
         <h3 style={{ marginBottom: 4 }}>Mark</h3>
         <OrgLogo orgId={org.id} onChanged={onSaved} />
       </div>
+
+      <DeleteOrganization org={org} onDeleted={() => { onClose(); onSaved(); }} />
     </Modal>
+  );
+}
+
+/**
+ * The end of an organization.
+ *
+ * Last in the modal and behind its own arming click, because it is the one
+ * control here that cannot be undone and the other two are things you come to
+ * this modal to do. The count is read before arming and stated plainly: an
+ * organizer with one stale test organization and one real one should not have
+ * to remember which is which at the moment of deleting it.
+ *
+ * The name has to be typed, the same price the dashboard asks for a published
+ * ballot -- and this is every ballot at once.
+ */
+function DeleteOrganization({ org, onDeleted }: {
+  org: Organization; onDeleted: () => void;
+}) {
+  const [arming, setArming] = useState(false);
+  const [typed, setTyped] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [count, setCount] = useState<number | null>(null);
+
+  // Only once it is armed: the dashboard already made one request per
+  // organization to draw this modal's card, and this is a question nobody
+  // asked until they reached for the button.
+  useEffect(() => {
+    if (!arming) return;
+    let live = true;
+    api.ballotsForOrg(org.id)
+      .then((b) => { if (live) setCount(b.length); })
+      .catch(() => { if (live) setCount(null); });
+    return () => { live = false; };
+  }, [arming, org.id]);
+
+  const remove = async () => {
+    setBusy(true); setError('');
+    try {
+      await api.deleteOrganization(org.id);
+      onDeleted();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not delete it.');
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ marginTop: 22, paddingTop: 18, borderTop: '1px solid var(--rule-soft)' }}>
+      <h3 style={{ marginBottom: 4 }}>Delete this organization</h3>
+
+      {!arming ? (
+        <>
+          <p className="faint">
+            Takes its ballots with it, and every PIN and vote on them.
+          </p>
+          <button className="danger" onClick={() => setArming(true)}>
+            Delete {org.name}
+          </button>
+        </>
+      ) : (
+        <div className="ballot-confirm">
+          <p className="faint">
+            Deleting &ldquo;{org.name}&rdquo; takes{' '}
+            {count === null ? 'its ballots'
+              : count === 0 ? 'nothing else — it has no ballots'
+              : count === 1 ? 'its 1 ballot'
+              : `its ${count} ballots`}
+            , every PIN and vote on {count === 1 ? 'it' : 'them'}, and its mark.
+            There is no undo.
+          </p>
+          {error ? <Banner kind="error">{error}</Banner> : null}
+          <div className="row">
+            <input
+              className="grow"
+              name="confirm_org"
+              autoFocus
+              autoComplete="off"
+              placeholder={`Type "${org.name}" to confirm`}
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+            />
+            <button className="ghost small"
+                    onClick={() => { setArming(false); setTyped(''); setError(''); }}>
+              Cancel
+            </button>
+            <button className="btn-danger solid small"
+                    disabled={busy || typed.trim() !== org.name.trim()}
+                    onClick={() => void remove()}>
+              {busy ? 'Deleting…' : 'Delete for good'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

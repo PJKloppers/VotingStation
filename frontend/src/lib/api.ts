@@ -262,6 +262,34 @@ export async function updateOrganization(id: string, patch: Partial<Organization
   if (error) throw new ApiError(error.message);
 }
 
+/**
+ * Deletes an organization, and with it everything that hangs off one.
+ *
+ * The database does the work: organizations cascades to ballots, a ballot to
+ * its questions, PINs and votes, and organization_images to the row naming the
+ * mark -- whose own trigger then removes the object from the bucket. So this
+ * is one delete, not a walk down a tree the client would have to keep in step
+ * with the schema.
+ *
+ * The mark's file is asked for through storage first, and only as a courtesy.
+ * The trigger removes storage's record of it either way, which is what makes
+ * it gone; going through the storage API as well is what lets the service
+ * reclaim the bytes rather than leave them unreferenced. A failure here is not
+ * worth stopping for -- there may be no mark, and the delete below is the part
+ * that matters.
+ */
+export async function deleteOrganization(id: string): Promise<void> {
+  try {
+    const mark = await orgLogo(id);
+    if (mark) await supabase.storage.from(LOGO_BUCKET).remove([mark.path]);
+  } catch {
+    // the trigger still takes the row; see above
+  }
+
+  const { error } = await supabase.from('organizations').delete().eq('id', id);
+  if (error) throw new ApiError(error.message);
+}
+
 export async function ballotsForOrg(orgId: string): Promise<Ballot[]> {
   const { data, error } = await supabase
     .from('ballots').select(BALLOT_COLUMNS)
