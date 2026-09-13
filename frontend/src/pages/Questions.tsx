@@ -116,7 +116,6 @@ function QuestionCard({ question, onChanged }: { question: AnyQuestion; onChange
           <h3>{question.prompt}</h3>
         </div>
         {question.gate_open ? <Pill tone="open">Gate open</Pill> : null}
-        {!question.enabled ? <Pill>Off ballot</Pill> : null}
         <button className="ghost small" onClick={() => setOpen(!open)}>
           {open ? 'Done' : 'Edit'}
         </button>
@@ -141,10 +140,6 @@ function QuestionCard({ question, onChanged }: { question: AnyQuestion; onChange
               </Field>
             </div>
           </div>
-          <Check label="On the ballot" checked={Boolean(value('enabled'))}
-                 onChange={(v) => set('enabled', v)}
-                 help="Turn off to keep the question but leave it out of this vote." />
-
           <TypeSettings question={question} value={value as (k: string) => unknown} set={set} />
 
           <div className="row" style={{ marginTop: 16 }}>
