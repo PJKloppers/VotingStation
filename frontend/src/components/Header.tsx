@@ -5,7 +5,6 @@
  * assembling it: main.tsx used to hold the markup inline, which made the
  * header something you changed by editing the router.
  */
-import { signOut } from '../lib/auth';
 import { href } from '../lib/router';
 
 export function Header({ session, at }: { session: boolean; at: string | undefined }) {
@@ -22,7 +21,12 @@ export function Header({ session, at }: { session: boolean; at: string | undefin
             <a href={href('/admin')} aria-current={at === 'admin' ? 'page' : undefined}>
               Organize
             </a>
-            <button onClick={() => void signOut()}>Sign out</button>
+            {/* Signing out lives on the account page with the other thing you
+                can do to an account, rather than sitting one stray click from
+                Organize on every page. */}
+            <a href={href('/account')} aria-current={at === 'account' ? 'page' : undefined}>
+              Account
+            </a>
           </>
         ) : (
           <a href={href('/signin')} aria-current={at === 'signin' ? 'page' : undefined}>

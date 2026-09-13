@@ -1908,3 +1908,31 @@ describe('deleting an organization', () => {
     await other.auth.signOut();
   });
 });
+
+describe('closing an account', () => {
+  /*
+   * The deletion itself is not exercised here, and deliberately: the only
+   * account this suite can sign in as is the one every other test needs, and
+   * signing up a throwaway is no use while the project confirms addresses --
+   * an unconfirmed user never gets a session to call this with. What the whole
+   * cascade does is verified against the database on a throwaway account
+   * instead; see the migration.
+   *
+   * What is worth checking from out here is the shape of the door: who may
+   * knock, and whether it can be pointed at anybody else.
+   */
+  test('an anonymous caller cannot close an account', async () => {
+    const { error } = await voter.rpc('delete_my_account');
+    expect(error?.message ?? '').toContain('permission denied');
+  });
+
+  test('it takes no argument, so there is no account to name but your own', async () => {
+    // A function that accepted an id would be one an organizer could point at
+    // somebody else; PostgREST cannot even find an overload that takes one.
+    const { error } = await organizer.rpc('delete_my_account', {
+      p_user: '00000000-0000-0000-0000-000000000001',
+    });
+    expect(error).not.toBeNull();
+    expect(error!.message + (error!.details ?? '')).toMatch(/could not find|schema cache/i);
+  });
+});

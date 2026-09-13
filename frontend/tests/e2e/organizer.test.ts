@@ -986,3 +986,53 @@ test('an organization can be deleted from its settings, and takes its ballots', 
 
   await page.close();
 }, 90000);
+
+test('the account page counts what closing it would take, and will not do it by accident', async () => {
+  /*
+   * Everything up to the last click. Pressing it would delete the account this
+   * whole suite signs in as, so the test stops where a person would still have
+   * a way back -- which is also the part worth checking, since the button being
+   * hard to reach by accident is the point of it.
+   */
+  const page = await signedInPage();
+  await page.goto(`${origin}/#/account`, { waitUntil: 'networkidle0' });
+
+  const { email } = credentials();
+  await waitForText(page, email);
+  await waitForText(page, 'Delete this account');
+
+  // nothing dangerous is on screen until it is asked for
+  expect(await page.$('input[name="confirm_account"]')).toBeNull();
+
+  await clickByText(page, 'button', 'Delete my account');
+
+  // it says what is on the account, counted rather than described
+  await page.waitForFunction(
+    () => /\d+ organizations? and \d+ ballots?|no organizations/.test(document.body.innerText),
+    { timeout: 20000 });
+
+  const armed = await page.waitForSelector('input[name="confirm_account"]', { timeout: 15000 });
+  const deleteDisabled = () => page.$eval('.ballot-confirm .btn-danger',
+    (b) => (b as HTMLButtonElement).disabled);
+
+  expect(await deleteDisabled()).toBe(true);
+
+  // a near miss is still a miss
+  await armed!.type(email.replace('@', '.'));
+  expect(await deleteDisabled()).toBe(true);
+
+  // the real address arms it -- and then we walk away
+  await page.$eval('input[name="confirm_account"]', (el) => { (el as HTMLInputElement).value = ''; });
+  await armed!.type(email);
+  expect(await deleteDisabled()).toBe(false);
+
+  await clickByText(page, 'button', 'Cancel');
+  await page.waitForFunction(
+    () => !document.querySelector('input[name="confirm_account"]'), { timeout: 10000 });
+
+  // and the account is, of course, still there
+  const { data } = await organizer.auth.getUser();
+  expect(data.user?.email).toBe(email);
+
+  await page.close();
+});

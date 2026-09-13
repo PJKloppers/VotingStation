@@ -290,6 +290,19 @@ export async function deleteOrganization(id: string): Promise<void> {
   if (error) throw new ApiError(error.message);
 }
 
+/**
+ * Closes the signed-in organizer's account.
+ *
+ * Takes no argument on purpose: the function behind it deletes auth.uid()'s row
+ * and nothing else, so there is no id here to get wrong. Everything the account
+ * owns follows by cascade -- organizations, their ballots, and under each its
+ * questions, PINs and votes, and the mark's file.
+ */
+export async function deleteAccount(): Promise<void> {
+  const { error } = await supabase.rpc('delete_my_account');
+  if (error) throw new ApiError(error.message);
+}
+
 export async function ballotsForOrg(orgId: string): Promise<Ballot[]> {
   const { data, error } = await supabase
     .from('ballots').select(BALLOT_COLUMNS)
