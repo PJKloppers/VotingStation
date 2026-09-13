@@ -976,3 +976,7 @@ button.share-copy[data-state="copied"]:hover {
    to act on, not as a caption under the camera. */
 .scan-ask { border-color: var(--defeated); margin-top: 12px; }
 .scan-ask .pin-display { font-size: 1.6rem; margin: 2px 0 6px; }
+
+/* One option pool on the pools page: a row that opens into its list. */
+.pool { border-top: 1px solid var(--rule-soft); padding: 10px 0 4px; }
+.pool:first-of-type { border-top: 0; }

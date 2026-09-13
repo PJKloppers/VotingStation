@@ -21,6 +21,9 @@ export function Header({ session, at }: { session: boolean; at: string | undefin
             <a href={href('/admin')} aria-current={at === 'admin' ? 'page' : undefined}>
               Organize
             </a>
+            <a href={href('/pools')} aria-current={at === 'pools' ? 'page' : undefined}>
+              Pools
+            </a>
             {/* Signing out lives on the account page with the other thing you
                 can do to an account, rather than sitting one stray click from
                 Organize on every page. */}

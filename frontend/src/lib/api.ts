@@ -10,7 +10,8 @@ import { supabase, SUPABASE_URL } from './supabase';
 import { fingerprint } from './fingerprint';
 import type {
   Accepted, Ballot, BallotResults, HighestOutrightQuestion, HighestXQuestion,
-  Organization, OrganizationImage, OrgPage, QuestionOption, QuestionType,
+  Organization, OrganizationImage, OptionPool, OptionPoolEntry, OrgPage,
+  QuestionOption, QuestionType,
   Refused, TokenReport, VoterState, YesNoQuestion,
 } from './types';
 
@@ -210,6 +211,7 @@ export async function ballotLogoPath(ballotId: string): Promise<string | null> {
 export interface Limits {
   organizations_per_user: number;
   ballots_per_organization: number;
+  option_pools_per_user: number;
 }
 
 /**
@@ -301,6 +303,85 @@ export async function deleteOrganization(id: string): Promise<void> {
 export async function deleteAccount(): Promise<void> {
   const { error } = await supabase.rpc('delete_my_account');
   if (error) throw new ApiError(error.message);
+}
+
+/* --------------------------------------------------------- the option pools
+ * A list of names kept on an organization and copied onto a question when it
+ * is wanted. Reading and writing them is ordinary table access -- the policies
+ * are owner-scoped -- but the copy is an RPC, because it writes to a question's
+ * options and has to check that both ends belong to the caller.
+ */
+
+export async function optionPools(orgId: string): Promise<OptionPool[]> {
+  const { data, error } = await supabase
+    .from('option_pools').select('*').eq('org_id', orgId).order('created_at');
+  return unwrap(data, error) as OptionPool[];
+}
+
+/** Every pool this user owns, across their organizations. */
+export async function myOptionPools(): Promise<OptionPool[]> {
+  const { data, error } = await supabase
+    .from('option_pools').select('*').order('created_at');
+  return unwrap(data, error) as OptionPool[];
+}
+
+export async function createOptionPool(orgId: string, name: string): Promise<OptionPool> {
+  const { data, error } = await supabase
+    .from('option_pools').insert({ org_id: orgId, name }).select().single();
+  return unwrap(data, error) as OptionPool;
+}
+
+export async function renameOptionPool(id: string, name: string): Promise<void> {
+  const { error } = await supabase.from('option_pools').update({ name }).eq('id', id);
+  if (error) throw new ApiError(error.message);
+}
+
+export async function deleteOptionPool(id: string): Promise<void> {
+  const { error } = await supabase.from('option_pools').delete().eq('id', id);
+  if (error) throw new ApiError(error.message);
+}
+
+export async function poolEntries(poolId: string): Promise<OptionPoolEntry[]> {
+  const { data, error } = await supabase
+    .from('option_pool_entries').select('*').eq('pool_id', poolId).order('sort_order');
+  return unwrap(data, error) as OptionPoolEntry[];
+}
+
+export async function addPoolEntries(
+  poolId: string, labels: string[], from: number,
+): Promise<void> {
+  if (labels.length === 0) return;
+  const { error } = await supabase.from('option_pool_entries').insert(
+    labels.map((label, i) => ({ pool_id: poolId, label, sort_order: from + i })),
+  );
+  if (error) throw new ApiError(error.message);
+}
+
+export async function updatePoolEntry(id: string, patch: { label: string }): Promise<void> {
+  const { error } = await supabase.from('option_pool_entries').update(patch).eq('id', id);
+  if (error) throw new ApiError(error.message);
+}
+
+export async function deletePoolEntry(id: string): Promise<void> {
+  const { error } = await supabase.from('option_pool_entries').delete().eq('id', id);
+  if (error) throw new ApiError(error.message);
+}
+
+/**
+ * Copies a pool onto a question, and says how many it added.
+ *
+ * Appends rather than replaces, and copies rather than links: from here on the
+ * options belong to the question, so editing the pool afterwards cannot reach
+ * back into a ballot that may already have votes on it.
+ */
+export async function copyPoolIntoQuestion(
+  poolId: string, type: QuestionType, questionId: string,
+): Promise<number> {
+  const { data, error } = await supabase.rpc('copy_pool_into_question', {
+    p_pool: poolId, p_type: type, p_question: questionId,
+  });
+  if (error) throw new ApiError(error.message);
+  return (data as number) ?? 0;
 }
 
 export async function ballotsForOrg(orgId: string): Promise<Ballot[]> {

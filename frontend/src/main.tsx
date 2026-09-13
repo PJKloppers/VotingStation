@@ -10,6 +10,7 @@ import { Admin } from './pages/Admin';
 import { Home } from './pages/Home';
 import { Account } from './pages/Account';
 import { Organization } from './pages/Organization';
+import { Pools } from './pages/Pools';
 import { Live } from './pages/Live';
 import { Manage } from './pages/Manage';
 import { PrivacyAndTerms } from './pages/PrivacyAndTerms';
@@ -53,6 +54,9 @@ function App() {
       case 'admin':
         if (!ready) return <main><Spinner label="Checking your session" /></main>;
         return session ? <Admin /> : <SignIn />;
+      case 'pools':
+        if (!ready) return <main><Spinner label="Checking your session" /></main>;
+        return session ? <Pools /> : <SignIn />;
       case 'account':
         if (!ready) return <main><Spinner label="Checking your session" /></main>;
         return session ? <Account session={session} /> : <SignIn />;

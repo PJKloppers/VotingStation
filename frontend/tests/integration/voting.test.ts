@@ -1936,3 +1936,127 @@ describe('closing an account', () => {
     expect(error!.message + (error!.details ?? '')).toMatch(/could not find|schema cache/i);
   });
 });
+
+describe('option pools', () => {
+  /*
+   * A list kept on an organization and copied onto a question. The three things
+   * worth holding still: the copy appends rather than replaces, the limit is
+   * counted per account rather than per organization, and a pool is as private
+   * as the organization it sits on.
+   */
+  let poolOrg = '';
+  let pool = '';
+  let poolBallot = '';
+  let electionId = '';
+
+  beforeAll(async () => {
+    const { data: user } = await organizer.auth.getUser();
+    const { data: org } = await organizer.from('organizations')
+      .insert({ owner_id: user.user!.id, slug: uniqueSlug('pooled'), name: 'Pooled Society' })
+      .select('id').single();
+    poolOrg = org!.id;
+
+    const { data: p } = await organizer.from('option_pools')
+      .insert({ org_id: poolOrg, name: 'The committee' }).select('id').single();
+    pool = p!.id;
+    await organizer.from('option_pool_entries').insert([
+      { pool_id: pool, label: 'Ann Meyer', sort_order: 1 },
+      { pool_id: pool, label: 'Bob Ncube', sort_order: 2 },
+      { pool_id: pool, label: 'Cyd Patel', sort_order: 3 },
+    ]);
+
+    const { data: b } = await organizer.from('ballots').insert({
+      org_id: poolOrg, slug: uniqueSlug('poolb'), title: 'Elections', status: 'draft', mode: 'gated',
+    }).select('id').single();
+    poolBallot = b!.id;
+
+    const { data: q } = await organizer.from('questions_highest_x').insert({
+      ballot_id: poolBallot, prompt: 'Elect three', sort_order: 1,
+      winner_count: 3, select_max: 3,
+    }).select('id').single();
+    electionId = q!.id;
+  });
+
+  afterAll(async () => {
+    if (poolOrg) await organizer.from('organizations').delete().eq('id', poolOrg);
+  });
+
+  test('a copy appends to what is already there', async () => {
+    await organizer.from('options_highest_x')
+      .insert({ question_id: electionId, label: 'Typed by hand', sort_order: 1 });
+
+    const added = await call<number>(organizer, 'copy_pool_into_question', {
+      p_pool: pool, p_type: 'highest_x', p_question: electionId,
+    });
+    expect(added).toBe(3);
+
+    const { data } = await organizer.from('options_highest_x')
+      .select('label').eq('question_id', electionId).order('sort_order');
+    expect(data!.map((o) => o.label))
+      .toEqual(['Typed by hand', 'Ann Meyer', 'Bob Ncube', 'Cyd Patel']);
+  });
+
+  test('it is a copy: editing the pool afterwards leaves the question alone', async () => {
+    const { data: entry } = await organizer.from('option_pool_entries')
+      .select('id').eq('pool_id', pool).eq('label', 'Ann Meyer').single();
+    await organizer.from('option_pool_entries')
+      .update({ label: 'Ann Meyer-Smith' }).eq('id', entry!.id);
+
+    const { data } = await organizer.from('options_highest_x')
+      .select('label').eq('question_id', electionId);
+    expect(data!.map((o) => o.label)).toContain('Ann Meyer');
+    expect(data!.map((o) => o.label)).not.toContain('Ann Meyer-Smith');
+  });
+
+  test('a yes/no question has nothing to copy into', async () => {
+    const { data: q } = await organizer.from('questions_yes_no')
+      .insert({ ballot_id: poolBallot, prompt: 'A motion', sort_order: 2 })
+      .select('id').single();
+
+    const { error } = await organizer.rpc('copy_pool_into_question', {
+      p_pool: pool, p_type: 'yes_no', p_question: q!.id,
+    });
+    expect(error?.message ?? '').toContain('no options to copy into');
+  });
+
+  test('the limit is counted per account, not per organization', async () => {
+    const { data: user } = await organizer.auth.getUser();
+    const { data: second } = await organizer.from('organizations')
+      .insert({ owner_id: user.user!.id, slug: uniqueSlug('pooled2'), name: 'Second Society' })
+      .select('id').single();
+
+    // one pool exists already; two more fill the account's three
+    await organizer.from('option_pools').insert({ org_id: second!.id, name: 'Second' });
+    await organizer.from('option_pools').insert({ org_id: second!.id, name: 'Third' });
+
+    // the fourth is refused even though this organization holds only two
+    const { error } = await organizer.from('option_pools')
+      .insert({ org_id: second!.id, name: 'Fourth' });
+    expect(error?.message ?? '').toContain('at most 3 option pools');
+
+    await organizer.from('organizations').delete().eq('id', second!.id);
+  });
+
+  test('another organizer cannot see it, or copy from it', async () => {
+    const other = await otherOrganizerClient();
+
+    const { data: seen } = await other.from('option_pools').select('id').eq('id', pool);
+    expect(seen ?? []).toHaveLength(0);
+
+    const { data: entries } = await other.from('option_pool_entries')
+      .select('id').eq('pool_id', pool);
+    expect(entries ?? []).toHaveLength(0);
+
+    const { error } = await other.rpc('copy_pool_into_question', {
+      p_pool: pool, p_type: 'highest_x', p_question: electionId,
+    });
+    expect(error?.message ?? '').toContain('Not your option pool');
+
+    await other.auth.signOut();
+  });
+
+  test('an anonymous reader sees no pools at all', async () => {
+    const { data } = await voter.from('option_pools').select('id');
+    expect(data ?? []).toHaveLength(0);
+  });
+});

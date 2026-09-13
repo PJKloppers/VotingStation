@@ -31,6 +31,24 @@ export interface Organization {
   created_at: string;
 }
 
+/** A reusable list of options, kept on an organization. */
+export interface OptionPool {
+  id: string;
+  org_id: string;
+  name: string;
+  description: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OptionPoolEntry {
+  id: string;
+  pool_id: string;
+  label: string;
+  description: string;
+  sort_order: number;
+}
+
 /** One organization's published ballots, for the page a scanned slug lands on. */
 export interface OrgPage {
   org: {

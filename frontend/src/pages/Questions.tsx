@@ -10,7 +10,7 @@ import { useCallback, useEffect, useState } from 'react';
 import * as api from '../lib/api';
 import type { AnyQuestion } from '../lib/api';
 import { parseOptionList } from '../lib/options';
-import type { QuestionOption, QuestionType } from '../lib/types';
+import type { OptionPool, QuestionOption, QuestionType } from '../lib/types';
 import { QUESTION_TYPE_NAMES } from '../lib/types';
 import { Banner, Card, Check, Empty, Field, Pill, Spinner } from '../components/ui';
 
@@ -239,6 +239,68 @@ function TypeSettings({ question, value, set }: {
   );
 }
 
+/**
+ * Filling a question's options from a list kept elsewhere.
+ *
+ * Shown only when there is a pool to copy: an organizer who keeps none should
+ * not be offered a control that can do nothing, and the ones who do keep them
+ * are the ones typing the same twelve names into every question.
+ *
+ * It appends, and it says how many it added afterwards, because "copy" with no
+ * answer leaves you scrolling to find out whether it worked.
+ */
+function CopyFromPool({ type, questionId, onCopied }: {
+  type: QuestionType; questionId: string; onCopied: () => Promise<void> | void;
+}) {
+  const [pools, setPools] = useState<OptionPool[] | null>(null);
+  const [chosen, setChosen] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [said, setSaid] = useState('');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let live = true;
+    api.myOptionPools()
+      .then((p) => { if (live) setPools(p); })
+      .catch(() => { if (live) setPools([]); });
+    return () => { live = false; };
+  }, []);
+
+  if (!pools || pools.length === 0) return null;
+
+  const copy = async () => {
+    const pool = chosen || pools[0]!.id;
+    setBusy(true); setError(''); setSaid('');
+    try {
+      const added = await api.copyPoolIntoQuestion(pool, type, questionId);
+      setSaid(added === 0
+        ? 'That pool is empty.'
+        : `Added ${added} option${added === 1 ? '' : 's'}.`);
+      await onCopied();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not copy that pool.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ marginTop: 14 }}>
+      {error ? <Banner kind="error">{error}</Banner> : null}
+      <div className="row">
+        <select className="grow" name="pool_choice" value={chosen}
+                onChange={(e) => { setChosen(e.target.value); setSaid(''); }}>
+          {pools.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+        <button className="ghost small" disabled={busy} onClick={() => void copy()}>
+          {busy ? 'Copying…' : 'Copy from pool'}
+        </button>
+      </div>
+      {said ? <p className="faint" style={{ marginTop: 6 }}>{said}</p> : null}
+    </div>
+  );
+}
+
 function Options({ type, questionId }: { type: QuestionType; questionId: string }) {
   const [options, setOptions] = useState<QuestionOption[] | null>(null);
   const [draft, setDraft] = useState('');
@@ -292,6 +354,8 @@ function Options({ type, questionId }: { type: QuestionType; questionId: string 
           </button>
         </div>
       ))}
+
+      <CopyFromPool type={type} questionId={questionId} onCopied={load} />
 
       {/* One control for one name or a whole column pasted out of a
           spreadsheet -- the parser takes commas, newlines and quoted fields

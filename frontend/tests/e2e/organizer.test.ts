@@ -1036,3 +1036,84 @@ test('the account page counts what closing it would take, and will not do it by 
 
   await page.close();
 });
+
+test('option pools: made on the page, and copied onto a question from the editor', async () => {
+  const { data: user } = await organizer.auth.getUser();
+  const { data: org } = await organizer.from('organizations')
+    .insert({ owner_id: user.user!.id, slug: uniqueSlug('poolui'), name: 'Pool UI Society' })
+    .select('id').single();
+  const orgId = org!.id;
+  const { data: b } = await organizer.from('ballots').insert({
+    org_id: orgId, slug: uniqueSlug('pooluib'), title: 'Pool UI ballot', status: 'draft',
+  }).select('id').single();
+  const ballot = b!.id;
+
+  const page = await signedInPage();
+  try {
+    await page.goto(`${origin}/#/pools`, { waitUntil: 'networkidle0' });
+    await waitForText(page, 'Pool UI Society');
+
+    /*
+     * Everything below is scoped to this test's own organization's card. The
+     * page lists every organization the account has, so an unscoped
+     * `input[name="pool_name"]` is the *first* card on the page -- which is the
+     * account's real organization. An earlier version of this test did exactly
+     * that and left three pools on it, which then filled the account's quota.
+     */
+    const fillIn = (org: string, selector: string, value: string) =>
+      page.evaluate((name: string, sel: string, text: string) => {
+        const box = [...document.querySelectorAll('.card')]
+          .find((c) => (c as HTMLElement).innerText.includes(name));
+        const el = box?.querySelector(sel) as HTMLInputElement | HTMLTextAreaElement | null;
+        if (!el) throw new Error(`no ${sel} on the ${name} card`);
+        const proto = el instanceof HTMLTextAreaElement
+          ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+        Object.getOwnPropertyDescriptor(proto, 'value')!.set!.call(el, text);
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      }, org, selector, value);
+
+    await fillIn('Pool UI Society', 'input[name="pool_name"]', 'The committee');
+    await clickWithin(page, '.card', 'Pool UI Society', 'button', 'Make this pool');
+    await page.waitForFunction(
+      () => !!document.querySelector('.pool'), { timeout: 15000 });
+
+    // opened, and a column pasted in
+    await clickWithin(page, '.card', 'Pool UI Society', 'button', 'The committee');
+    await page.waitForSelector('textarea[name="pool_draft"]', { timeout: 15000 });
+    // through React's own value setter rather than typed: a newline sent as a
+    // keystroke is at the mercy of the form around it, and the point here is
+    // the pasted column, not the typing
+    await fillIn('Pool UI Society', 'textarea[name="pool_draft"]',
+                 'Ann Meyer\nBob Ncube\nCyd Patel');
+    await waitForText(page, '3 to add');
+    await clickWithin(page, '.card', 'Pool UI Society', 'button', 'Add them');
+    await page.waitForFunction(
+      () => document.querySelectorAll('input[name="pool_entry"]').length === 3,
+      { timeout: 15000 });
+
+    const { data: stored } = await organizer.from('option_pool_entries')
+      .select('label, pool_id, option_pools!inner(org_id)')
+      .eq('option_pools.org_id', orgId).order('sort_order');
+    expect(stored!.map((e) => e.label)).toEqual(['Ann Meyer', 'Bob Ncube', 'Cyd Patel']);
+
+    // and copied onto a question from the question editor
+    const { data: q } = await organizer.from('questions_highest_x').insert({
+      ballot_id: ballot, prompt: 'Elect three', sort_order: 1, winner_count: 3, select_max: 3,
+    }).select('id').single();
+
+    await page.goto(`${origin}/#/manage/${ballot}`, { waitUntil: 'networkidle0' });
+    await clickByText(page, 'button', 'Questions');
+    await waitForText(page, 'Elect three');
+    await clickByText(page, 'button', 'Edit');
+    await page.waitForSelector('select[name="pool_choice"]', { timeout: 15000 });
+    await clickByText(page, 'button', 'Copy from pool');
+    await waitForText(page, 'Added 3 options');
+
+    const { data: opts } = await organizer.from('options_highest_x')
+      .select('label').eq('question_id', q!.id).order('sort_order');
+    expect(opts!.map((o) => o.label)).toEqual(['Ann Meyer', 'Bob Ncube', 'Cyd Patel']);
+  } finally {
+    await organizer.from('organizations').delete().eq('id', orgId);
+    await page.close();
+  }
+}, 90000);
