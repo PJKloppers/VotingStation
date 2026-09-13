@@ -256,15 +256,32 @@ export function Tokens({ ballotId, ballotTitle }: { ballotId: string; ballotTitl
  * room the layout has and no more.
  */
 function PinBarcode({ code }: { code: Barcode }) {
-  // A stated height in modules, so the viewBox carries the proportion and the
-  // stylesheet only has to say how wide the thing is.
-  const height = 26;
+  /*
+   * Turned on its side, so the symbol runs down the slip rather than across it.
+   *
+   * A slip is far wider than it is tall, but the barcode's problem is the
+   * opposite way round: what it needs is length, because its length divided by
+   * its 88 modules is the width of the narrowest bar, and that is what decides
+   * whether it reads. Lying across the slip it had about 18mm to work with and
+   * a 0.20mm module; stood up it has the slip's whole height, near 29mm, and a
+   * module half again as wide -- while taking less of the width, which the
+   * square code and the words wanted anyway.
+   *
+   * Rotated in the path rather than by the stylesheet: a CSS transform leaves
+   * the layout box in the old orientation, which on a printed sheet means a
+   * barcode overlapping whatever is beside it.
+   */
+  const bar = 26;                       // the bars' length, in modules
   return (
     <svg className="slip-pin-code" shapeRendering="crispEdges"
-         viewBox={`0 0 ${code.width} ${height}`} preserveAspectRatio="none"
+         viewBox={`0 0 ${bar} ${code.width}`} preserveAspectRatio="none"
          role="img" aria-label={`The PIN, as a barcode: ${code.text}`}>
       <rect width="100%" height="100%" fill="#fff" />
-      <path d={barcodePath(code, height)} fill="#000" />
+      {/* rotate(90) sends (x, y) to (-y, x), so the symbol comes back into the
+          box by its own bar length. */}
+      <g transform={`translate(${bar} 0) rotate(90)`}>
+        <path d={barcodePath(code, bar)} fill="#000" />
+      </g>
     </svg>
   );
 }

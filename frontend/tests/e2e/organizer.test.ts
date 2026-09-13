@@ -922,9 +922,10 @@ test('every slip carries the PIN as a code of its own, whatever the QR is set to
 
   expect(geometry.children[geometry.children.length - 1]).toContain('slip-pin-code');
   expect(geometry.pin!.right).toBeGreaterThan(geometry.qr!.right);
-  // a row of bars, not a square: wider than it is tall, and the smaller of the
-  // two codes, which is the whole point of it being a barcode
-  expect(geometry.pin!.width).toBeGreaterThan(geometry.pin!.height);
+  // stood on end: the symbol runs down the slip, so it is taller than it is
+  // wide, and narrower than the square code -- which is the point of standing
+  // it up, since its length is what decides whether it reads
+  expect(geometry.pin!.height).toBeGreaterThan(geometry.pin!.width);
   expect(geometry.pin!.width).toBeLessThan(geometry.qr!.width);
 
   await organizer.from('ballots').delete().eq('id', ballot);

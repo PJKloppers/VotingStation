@@ -82,20 +82,37 @@ export default function PinDeleteScanner(
                     + pixels.data[i * 4 + 2]! * 117) >> 10;
         }
         /*
-         * Both binarizers, because which one copes is a property of the light
-         * rather than of the code: the block-local one handles a slip lit
-         * unevenly, and the global one a flat field where the block-local one
-         * finds edges that are not there. The second only runs when the first
-         * found nothing, which on a frame with no barcode in it is the cost of
-         * one pass over pixels already in cache.
+         * Upright and on its side, each through both binarizers.
+         *
+         * The turn is not optional: the barcode is printed standing up the
+         * slip, ZXing's luminance source reports no rotation support so it
+         * will not try the other way round on its own, and somebody holding a
+         * slip up to a camera holds it whichever way it came off the pile.
+         *
+         * Which binarizer copes is a property of the light rather than of the
+         * code -- the block-local one handles a slip lit unevenly, the global
+         * one a flat field where the other finds edges that are not there.
+         *
+         * Each attempt after the first runs only because the one before found
+         * nothing, which on a frame with no barcode in it -- most frames -- is
+         * a few more passes over pixels already in cache.
          */
-        for (const Binarizer of [HybridBinarizer, GlobalHistogramBinarizer]) {
-          try {
-            const bitmap = new BinaryBitmap(new Binarizer(
-              new RGBLuminanceSource(lum, pixels.width, pixels.height)));
-            return reader.decode(bitmap, hints).getText();
-          } catch {
-            // no barcode this way in this frame, which is true of most frames
+        const w = pixels.width;
+        const h = pixels.height;
+        const turned = new Uint8ClampedArray(lum.length);
+        for (let y = 0; y < h; y++) {
+          for (let x = 0; x < w; x++) turned[x * h + (h - 1 - y)] = lum[y * w + x]!;
+        }
+
+        for (const [px, pw, ph] of [[lum, w, h], [turned, h, w]] as const) {
+          for (const Binarizer of [HybridBinarizer, GlobalHistogramBinarizer]) {
+            try {
+              const bitmap = new BinaryBitmap(new Binarizer(
+                new RGBLuminanceSource(px, pw, ph)));
+              return reader.decode(bitmap, hints).getText();
+            } catch {
+              // not this way up, or not with this threshold
+            }
           }
         }
         return null;

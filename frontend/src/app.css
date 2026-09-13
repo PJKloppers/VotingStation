@@ -859,8 +859,11 @@ button.share-copy[data-state="copied"]:hover {
      one line across it, so this is about aiming and nothing else. */
   .slip-pin-code {
     flex: 0 0 auto;
-    width: 20%;
-    height: 32%;
+    /* Stood on end: the height is now the symbol's length, which is the
+       measurement that matters, and the width is only the bars' length -- how
+       far a scanner's line has to stay on the code, not how much it holds. */
+    width: 9%;
+    height: 92%;
     display: block;
   }
 

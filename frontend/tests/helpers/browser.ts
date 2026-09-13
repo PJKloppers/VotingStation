@@ -158,11 +158,32 @@ export async function decodeBarcode(png: { data: Buffer; width: number; height: 
   hints.set(DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.CODE_128]);
   hints.set(DecodeHintType.TRY_HARDER, true);
 
-  const bitmap = new BinaryBitmap(new HybridBinarizer(
-    new RGBLuminanceSource(luminances, png.width, png.height)));
-  try {
-    return new MultiFormatOneDReader(hints).decode(bitmap, hints).getText();
-  } catch {
-    return null;
+  /*
+   * Upright and on its side. RGBLuminanceSource reports no rotation support,
+   * so ZXing will not try the other way round by itself -- and the barcode on a
+   * slip is printed standing up. A real scanner does not care which way the
+   * paper is held, so neither does this.
+   */
+  const turned = new Uint8ClampedArray(luminances.length);
+  for (let y = 0; y < png.height; y++) {
+    for (let x = 0; x < png.width; x++) {
+      // (x, y) -> (height - 1 - y, x) in an image that is height wide
+      turned[x * png.height + (png.height - 1 - y)] = luminances[y * png.width + x]!;
+    }
   }
+
+  const tries: Array<[Uint8ClampedArray, number, number]> = [
+    [luminances, png.width, png.height],
+    [turned, png.height, png.width],
+  ];
+  for (const [pixels, w, h] of tries) {
+    try {
+      const bitmap = new BinaryBitmap(new HybridBinarizer(
+        new RGBLuminanceSource(pixels, w, h)));
+      return new MultiFormatOneDReader(hints).decode(bitmap, hints).getText();
+    } catch {
+      // not this way up
+    }
+  }
+  return null;
 }

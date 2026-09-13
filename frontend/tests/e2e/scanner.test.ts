@@ -60,17 +60,19 @@ async function fakeBarcodeCamera(pin: string, into: string): Promise<void> {
   if (!code) throw new Error('that pin does not encode');
 
   // A slip, as a camera held over one actually sees it: white paper filling the
-  // frame, the barcode across it, and the rest of the slip's printing there
+  // frame, the barcode standing up its right-hand edge as printed, and the rest of the slip's printing there
   // too so the decoder has to pick it out of something rather than out of an
   // empty field.
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480">
     <rect width="640" height="480" fill="#fff"/>
     <text x="40" y="90" font-family="Georgia,serif" font-size="30" fill="#000">Annual general meeting</text>
     <text x="40" y="150" font-family="monospace" font-size="46" fill="#000">${pin}</text>
-    <svg x="60" y="230" width="520" height="150" viewBox="0 0 ${code.width} 26"
+    <svg x="430" y="40" width="120" height="400" viewBox="0 0 26 ${code.width}"
          preserveAspectRatio="none" shape-rendering="crispEdges">
       <rect width="100%" height="100%" fill="#fff"/>
-      <path d="${barcodePath(code, 26)}" fill="#000"/>
+      <g transform="translate(26 0) rotate(90)">
+        <path d="${barcodePath(code, 26)}" fill="#000"/>
+      </g>
     </svg></svg>`;
 
   const browser = await launchBrave();
