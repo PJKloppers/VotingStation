@@ -23,7 +23,8 @@ import { DEFAULT_BACKSTOP_MS, useBallotWatch } from '../lib/watch';
 import { minimumPicks, selectionError, type HighestXConfig } from '../lib/rules';
 import { navigate } from '../lib/router';
 import type {
-  Accepted, Ballot, BallotOption, LobbyQuestion, QuestionResult, Refused, VoterState,
+  Accepted, Ballot, BallotOption, BallotResults, LobbyQuestion, QuestionResult,
+  Refused, VoterState,
 } from '../lib/types';
 import { Banner, Card, Empty, Pill, Rail, Spinner } from '../components/ui';
 import { QuestionTally } from './Results';
@@ -55,6 +56,15 @@ function Ballot({ ballotId, carried }: { ballotId: string; carried?: string }) {
   const [state, setState] = useState<VoterState | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  /*
+   * A closed ballot has nothing to ask the voter, but it usually has something
+   * to tell them. Rather than answer a PIN with a flat refusal, the count is
+   * fetched -- the public one, by the same call the public results page makes,
+   * so it is the database that decides what may be shown and this page never
+   * has to reason about it. A ballot that does not publish its results refuses
+   * that call too, and then the closed message is all there is to say.
+   */
+  const [closedResults, setClosedResults] = useState<BallotResults | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -74,12 +84,17 @@ function Ballot({ ballotId, carried }: { ballotId: string; carried?: string }) {
     if (!next.ok) {
       setError(next.error);
       if (!next.closed) setState(null);
+      else {
+        void api.ballotResults(ballotId)
+          .then((r) => { if (r.ok) setClosedResults(r); })
+          .catch(() => { /* the message below is still the answer */ });
+      }
       return false;
     }
     setState(next);
     setError('');
     return true;
-  }, []);
+  }, [ballotId]);
 
   const refresh = useCallback(async (thePin = pin) => {
     setBusy(true);
@@ -147,7 +162,9 @@ function Ballot({ ballotId, carried }: { ballotId: string; carried?: string }) {
 
         {error ? <Banner kind="error">{error}</Banner> : null}
 
-        {!state ? (
+        {closedResults ? (
+          <ClosedResults results={closedResults} />
+        ) : !state ? (
           <PinScreen ballot={ballot} pin={pin} busy={busy}
                      onPin={setPin} onSubmit={() => void refresh()} />
         ) : (
@@ -162,6 +179,39 @@ function Ballot({ ballotId, carried }: { ballotId: string; carried?: string }) {
         )}
       </div>
     </main>
+  );
+}
+
+/**
+ * What a voter is shown when the ballot they hold a PIN for is over.
+ *
+ * The public tally, exactly as anyone reading the results link would see it --
+ * an X-of-N question names who took the seats and no counts, because that is
+ * what the database hands out to somebody who is not the organizer. There is
+ * no PIN in any of it, so nothing here depends on the one that was typed; it
+ * is shown because the voter asked, not because of who they are.
+ */
+function ClosedResults({ results }: { results: BallotResults }) {
+  return (
+    <div className="stack">
+      <Banner kind="info">
+        This ballot is closed. These are its published results.
+      </Banner>
+
+      <p className="faint">
+        {results.turnout.used} of {results.turnout.issued} PINs used
+      </p>
+
+      {results.questions.length === 0
+        ? <Empty>
+            {results.withheld > 0
+              ? 'Nothing from this ballot has been published.'
+              : 'This ballot had no questions.'}
+          </Empty>
+        : results.questions.map((q) => (
+            <Card key={q.id}><QuestionTally result={q} /></Card>
+          ))}
+    </div>
   );
 }
 

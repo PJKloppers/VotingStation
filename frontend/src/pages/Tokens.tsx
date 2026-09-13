@@ -1,10 +1,17 @@
 /** Minting and managing a ballot's PINs. */
-import { useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import * as api from '../lib/api';
 import type { TokenReport, TokenRow } from '../lib/types';
 import { encodeQr, QUIET, qrPath, type QrCode } from '../lib/qr';
+import { barcodePath, encodeBarcode, type Barcode } from '../lib/barcode';
 import { appBase, href } from '../lib/router';
 import { Banner, Card, Check, Field, Pill, Spinner } from '../components/ui';
+
+/**
+ * The camera and its two decoders are a large thing to carry for a page that is
+ * mostly a table, so they arrive only if somebody opens the scanner.
+ */
+const PinDeleteScanner = lazy(() => import('../components/PinDeleteScanner'));
 
 /** Slips to a printed page. The stylesheet lays out this many rows. */
 const PER_PAGE = 16;
@@ -21,6 +28,7 @@ export function Tokens({ ballotId, ballotTitle }: { ballotId: string; ballotTitl
   // Off every time the page loads, deliberately: it makes the printed code the
   // credential, and that is not a decision to leave switched on by accident.
   const [embedPin, setEmbedPin] = useState(false);
+  const [scanning, setScanning] = useState(false);
 
   // The slip carries the readable link, so the page needs the pair of slugs.
   useEffect(() => {
@@ -141,6 +149,10 @@ export function Tokens({ ballotId, ballotTitle }: { ballotId: string; ballotTitl
               {report.issued} issued · {report.used} used · {report.disabled} disabled
             </p>
           </div>
+          <button className="ghost small" onClick={() => setScanning((v) => !v)}
+                  disabled={report.issued === 0}>
+            {scanning ? 'Close scanner' : 'Scan to delete'}
+          </button>
           <button className="ghost small" onClick={print} disabled={report.issued === 0}>
             Print slips
           </button>
@@ -148,6 +160,14 @@ export function Tokens({ ballotId, ballotTitle }: { ballotId: string; ballotTitl
             Download CSV
           </button>
         </div>
+
+        {scanning ? (
+          <div style={{ marginTop: 14 }}>
+            <Suspense fallback={<Spinner label="Opening the camera" />}>
+              <PinDeleteScanner tokens={report.tokens} onDeleted={load} />
+            </Suspense>
+          </div>
+        ) : null}
 
         <Check
           label="Put the PIN in the code as well"
@@ -223,25 +243,28 @@ export function Tokens({ ballotId, ballotTitle }: { ballotId: string; ballotTitl
  * that -- and the printed result is decoded in the test rather than assumed.
  */
 /**
- * The PIN as a code of its own, on the right of every slip.
+ * The PIN as a row of bars, on the right of every slip.
  *
  * The big code points at the ballot, and only carries the PIN when the
  * organizer has asked it to. This one always carries the PIN and nothing else,
- * so a door scanner reads the six digits off any slip whichever way that
- * setting is left. Six digits is a version 1 code -- the smallest there is --
- * which is why it scans at this size.
+ * so a scanner at the door reads the six digits off any slip whichever way
+ * that setting is left -- and a barcode is what the hand-held scanner on a
+ * desk is, where a phone is what reads the square one.
  *
- * No mark in the middle: the organizer's logo is decoration on a code a person
- * points a phone at, and this is the one a machine has to get right first time.
+ * Drawn at its own aspect ratio rather than squeezed into a square: the width
+ * is fixed by the symbol, and the height is free, so the bars are given the
+ * room the layout has and no more.
  */
-function PinCode({ code }: { code: QrCode }) {
-  const span = code.size + QUIET * 2;
+function PinBarcode({ code }: { code: Barcode }) {
+  // A stated height in modules, so the viewBox carries the proportion and the
+  // stylesheet only has to say how wide the thing is.
+  const height = 26;
   return (
     <svg className="slip-pin-code" shapeRendering="crispEdges"
-         viewBox={`0 0 ${span} ${span}`}
-         role="img" aria-label="The PIN, as a code">
+         viewBox={`0 0 ${code.width} ${height}`} preserveAspectRatio="none"
+         role="img" aria-label={`The PIN, as a barcode: ${code.text}`}>
       <rect width="100%" height="100%" fill="#fff" />
-      <path d={qrPath(code)} fill="#000" />
+      <path d={barcodePath(code, height)} fill="#000" />
     </svg>
   );
 }
@@ -300,26 +323,15 @@ function PrintSheet({ ballotId, title, tokens, mark, slugs, embedPin }: {
   const gauge = shared ?? encodeQr(`${base}?pin=000000`);
   const inkRatio = gauge ? gauge.size / (gauge.size + QUIET * 2) : 1;
 
-  // The PIN's code carries six digits, so it is a version 1 symbol whatever the
-  // PIN is -- the smallest there is, and the one whose four-module quiet zone
-  // is the largest share of its own box. Given the same width as the big code
-  // it would print visibly smaller. Scaled by the ratio of the two fractions,
-  // the three squares across a slip end up the same size in ink.
-  const pinGauge = encodeQr('000000');
-  const pinInkRatio = pinGauge ? pinGauge.size / (pinGauge.size + QUIET * 2) : 1;
-
   return (
     <div className="print-sheet" aria-hidden="true"
-         style={{
-           ['--mark-scale' as string]: String(inkRatio),
-           ['--pin-scale' as string]: String(inkRatio / pinInkRatio),
-         }}>
+         style={{ ['--mark-scale' as string]: String(inkRatio) }}>
       {sheets.map((sheet, i) => (
         <div key={i} className={`print-page${i === sheets.length - 1 ? ' last' : ''}`}>
       {sheet.map((t) => {
         const url = embedPin ? `${base}?pin=${t.pin}` : base;
         const code = shared ?? encodeQr(url);
-        const pinCode = encodeQr(t.pin);
+        const pinCode = encodeBarcode(t.pin);
         return (
         <div key={t.id} className="slip">
           {/* Black on white regardless of theme: a scanner wants dark modules
@@ -334,7 +346,7 @@ function PrintSheet({ ballotId, title, tokens, mark, slugs, embedPin }: {
           {/* The mark balances the code across the slip, at the same size. */}
           {mark ? <img className="slip-mark" src={mark} alt="" /> : null}
           {/* Rightmost, and on every slip: the PIN as a code in its own right. */}
-          {pinCode ? <PinCode code={pinCode} /> : null}
+          {pinCode ? <PinBarcode code={pinCode} /> : null}
         </div>
         );
       })}

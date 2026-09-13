@@ -822,13 +822,9 @@ button.share-copy[data-state="copied"]:hover {
        on a tall one. Height alone let the code eat the column the PIN needed
        and pushed the digits off the edge. */
     flex: 0 0 auto;
-    /* Shorter than the PIN's code by exactly the ratio their quiet zones
-       differ by, so the two match on whichever axis happens to bind. A
-       max-width alone was not enough: on a short, wide slip the height is
-       what governs, and the scaling below never came into play. */
-    height: calc(92% / var(--pin-scale, 1));
+    height: 92%;
     width: auto;
-    max-width: 20%;
+    max-width: 26%;
     aspect-ratio: 1 / 1;
     display: block;
   }
@@ -844,28 +840,27 @@ button.share-copy[data-state="copied"]:hover {
      read as a pair with the words between them. */
   .slip-mark {
     flex: 0 0 auto;
-    height: calc(92% / var(--pin-scale, 1) * var(--mark-scale, 1));
+    height: calc(92% * var(--mark-scale, 1));
     width: auto;
     /* The code reserves a quiet zone inside its own box; the mark does not, so
        it is scaled by the same fraction to end up looking the same size. */
-    max-width: calc(20% * var(--mark-scale, 1));
+    max-width: calc(26% * var(--mark-scale, 1));
     aspect-ratio: 1 / 1;
     object-fit: contain;
     display: block;
   }
-  /* The PIN's own code, on the right edge of every slip.
-     Narrower than the big one and it can afford to be: six digits is a
-     version 1 symbol, 21 modules a side, so its modules are the coarsest of
-     the three and it is the easiest of them to read. Same width as the other
-     two: three squares across a slip, in one size. */
+  /* The PIN's barcode, on the right edge of every slip.
+     Its width is not a free choice. Divided by the symbol's 88 modules it
+     gives the width of the narrowest bar, and that is what decides whether a
+     scanner reads it: rendered at 203dpi, which is what a hand-held scanner
+     sees, this stops decoding below about 17% and reads from there up. 20% is
+     the first size with any margin over that -- about 0.20mm a module.
+     The height is the part a barcode can give away, and does: a scanner reads
+     one line across it, so this is about aiming and nothing else. */
   .slip-pin-code {
     flex: 0 0 auto;
-    height: 92%;
-    width: auto;
-    /* Scaled the way the mark is, and for the same reason: what should match
-       across a slip is the ink, not the box the ink is centred in. */
-    max-width: calc(20% * var(--pin-scale, 1));
-    aspect-ratio: 1 / 1;
+    width: 20%;
+    height: 32%;
     display: block;
   }
 
@@ -972,3 +967,9 @@ button.share-copy[data-state="copied"]:hover {
 
 .scanner-note { color: #fff; font-size: 0.9rem; margin: 0; }
 .scanner > p { margin: 10px 0 0; }
+
+/* The scanner's question, when it has a slip's PIN and wants an answer before
+   it takes it off the roll. Bordered rather than plain so it reads as a thing
+   to act on, not as a caption under the camera. */
+.scan-ask { border-color: var(--defeated); margin-top: 12px; }
+.scan-ask .pin-display { font-size: 1.6rem; margin: 2px 0 6px; }

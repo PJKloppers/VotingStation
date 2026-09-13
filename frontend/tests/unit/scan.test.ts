@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { readDestination, routeFor } from '../../src/lib/scan';
+import { pinFromScan, readDestination, routeFor } from '../../src/lib/scan';
 
 const SITE = 'https://pjkloppers.github.io/VotingStation/';
 
@@ -108,5 +108,34 @@ describe('a code that carries its own PIN', () => {
     const to = readDestination(`${SITE}#/vote/demo-society/agm-2026?pin=531907`)!;
     expect(routeFor(to)).toBe('/vote/demo-society/agm-2026?pin=531907');
     expect(readDestination(routeFor(to))).toEqual(to);
+  });
+});
+
+describe('the PIN a scanned code carries', () => {
+  test('a barcode is the digits themselves', () => {
+    expect(pinFromScan('091772')).toBe('091772');
+    expect(pinFromScan('  091772 ')).toBe('091772');
+  });
+
+  test('a QR with the PIN printed into it', () => {
+    expect(pinFromScan('https://host/#/vote/claude-society/agm?pin=091772')).toBe('091772');
+    expect(pinFromScan('https://host/VotingStation/#/vote/dd9679be-0aec-4dde-bd62-01d8ca4d26bc?pin=4321'))
+      .toBe('4321');
+  });
+
+  test('a QR from a sheet printed without the PIN carries none', () => {
+    expect(pinFromScan('https://host/#/vote/claude-society/agm')).toBeNull();
+  });
+
+  test('somebody else\'s code is not a PIN', () => {
+    expect(pinFromScan('tel:0115552368')).toBeNull();
+    expect(pinFromScan('https://example.org/')).toBeNull();
+    expect(pinFromScan('')).toBeNull();
+  });
+
+  test('a number that is not PIN-shaped is refused', () => {
+    expect(pinFromScan('12')).toBeNull();                 // too short
+    expect(pinFromScan('1234567890123')).toBeNull();      // too long
+    expect(pinFromScan('09a772')).toBeNull();
   });
 });

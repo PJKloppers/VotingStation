@@ -230,7 +230,7 @@ function TypeSettings({ question, value, set }: {
         </Field>
       </div>
       <div className="grow">
-        <Field label="Seats" help="How many are elected.">
+        <Field label="Seats">
           <input type="number" min={1} value={Number(value('winner_count'))}
                  onChange={(e) => set('winner_count', Number(e.target.value))} />
         </Field>

@@ -130,3 +130,39 @@ export async function clickByText(
   if (!element) throw new Error(`No ${selector} reading "${text}".`);
   await element.click();
 }
+
+/**
+ * Reads a Code 128 barcode out of a PNG.
+ *
+ * ZXing rather than our own encoder run backwards: a table copied wrongly into
+ * `lib/barcode.ts` would otherwise agree with itself and the test would pass on
+ * a barcode no scanner in the world could read.
+ *
+ * Given a Uint8ClampedArray, ZXing's RGBLuminanceSource takes the values as
+ * luminance already computed -- one byte a pixel, not four.
+ */
+export async function decodeBarcode(png: { data: Buffer; width: number; height: number }):
+  Promise<string | null> {
+  const {
+    MultiFormatOneDReader, BinaryBitmap, HybridBinarizer, RGBLuminanceSource,
+    DecodeHintType, BarcodeFormat,
+  } = await import('@zxing/library');
+
+  const luminances = new Uint8ClampedArray(png.width * png.height);
+  for (let i = 0; i < luminances.length; i++) {
+    luminances[i] = (png.data[i * 4]! * 306 + png.data[i * 4 + 1]! * 601
+                     + png.data[i * 4 + 2]! * 117) >> 10;
+  }
+
+  const hints = new Map();
+  hints.set(DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.CODE_128]);
+  hints.set(DecodeHintType.TRY_HARDER, true);
+
+  const bitmap = new BinaryBitmap(new HybridBinarizer(
+    new RGBLuminanceSource(luminances, png.width, png.height)));
+  try {
+    return new MultiFormatOneDReader(hints).decode(bitmap, hints).getText();
+  } catch {
+    return null;
+  }
+}

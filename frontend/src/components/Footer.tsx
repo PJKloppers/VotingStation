@@ -11,9 +11,7 @@ import { pathHref } from '../lib/router';
 export function Footer() {
   return (
     <footer className="site">
-      <p className="site-note">
-        Token voting for organizations · each question publishes when its gate closes
-      </p>
+      <p className="site-note">Token voting for organizations</p>
       <div className="site-links">
         {/* The path form rather than the hash: this is the link that gets
             handed to somebody outside the app, so it is the one to show. */}

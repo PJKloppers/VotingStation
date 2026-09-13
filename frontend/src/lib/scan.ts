@@ -89,3 +89,20 @@ export function routeFor(to: Destination): string {
     : `/vote/${to.orgSlug}/${to.ballotSlug}`;
   return to.pin ? `${path}?pin=${to.pin}` : path;
 }
+
+/**
+ * The PIN a scanned code carries, or null.
+ *
+ * Two shapes reach this. A slip's barcode holds the digits and nothing else.
+ * A slip's QR holds the ballot's address, which carries a PIN only when the
+ * organizer chose to print it that way -- so a QR from a sheet printed without
+ * that setting has no PIN in it, and says so rather than guessing.
+ */
+export function pinFromScan(text: string): string | null {
+  const trimmed = text.trim();
+  if (/^[0-9]{4,12}$/.test(trimmed)) return trimmed;
+
+  const to = readDestination(trimmed);
+  // An organization's code addresses no ballot, so it carries no PIN either.
+  return to && to.kind !== 'organization' ? to.pin ?? null : null;
+}

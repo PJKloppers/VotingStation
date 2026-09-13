@@ -14,8 +14,9 @@ import { tmpdir } from 'node:os';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import puppeteer, { type Browser } from 'puppeteer-core';
 import { encodeQr, QUIET, qrPath } from '../../src/lib/qr';
-import { braveExecutable, launchBrave, serveStatic, waitForText } from '../helpers/browser';
-import { organizerClient, uniqueSlug } from '../helpers/env';
+import { barcodePath, encodeBarcode } from '../../src/lib/barcode';
+import { braveExecutable, clickByText, launchBrave, serveStatic, waitForText } from '../helpers/browser';
+import { credentials, organizerClient, uniqueSlug } from '../helpers/env';
 
 const DIST = new URL('../../dist', import.meta.url).pathname;
 const HAVE_FFMPEG = await Bun.$`which ffmpeg`.quiet().then(() => true).catch(() => false);
@@ -50,6 +51,37 @@ async function fakeCamera(url: string, into: string): Promise<void> {
   await browser.close();
 
   await Bun.$`ffmpeg -y -loglevel error -loop 1 -i ${png} -t 6 -r 10 -pix_fmt yuv420p ${into}`.quiet();
+  await rm(png, { force: true });
+}
+
+/** The same, showing a PIN's barcode rather than a ballot's QR. */
+async function fakeBarcodeCamera(pin: string, into: string): Promise<void> {
+  const code = encodeBarcode(pin);
+  if (!code) throw new Error('that pin does not encode');
+
+  // A slip, as a camera held over one actually sees it: white paper filling the
+  // frame, the barcode across it, and the rest of the slip's printing there
+  // too so the decoder has to pick it out of something rather than out of an
+  // empty field.
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480">
+    <rect width="640" height="480" fill="#fff"/>
+    <text x="40" y="90" font-family="Georgia,serif" font-size="30" fill="#000">Annual general meeting</text>
+    <text x="40" y="150" font-family="monospace" font-size="46" fill="#000">${pin}</text>
+    <svg x="60" y="230" width="520" height="150" viewBox="0 0 ${code.width} 26"
+         preserveAspectRatio="none" shape-rendering="crispEdges">
+      <rect width="100%" height="100%" fill="#fff"/>
+      <path d="${barcodePath(code, 26)}" fill="#000"/>
+    </svg></svg>`;
+
+  const browser = await launchBrave();
+  const page = await browser.newPage();
+  await page.setViewport({ width: 640, height: 480 });
+  await page.setContent(`<body style="margin:0">${svg}</body>`);
+  const png = `${into}.png`;
+  await page.screenshot({ path: png as `${string}.png` });
+  await browser.close();
+
+  await Bun.$`ffmpeg -y -loglevel error -loop 1 -i ${png} -t 8 -r 10 -pix_fmt yuv420p ${into}`.quiet();
   await rm(png, { force: true });
 }
 
@@ -191,4 +223,101 @@ describe('the scanner', () => {
     expect(await page.evaluate(() => window.location.hash)).toBe('#/');
     await browser.close();
   });
+});
+
+describe('scanning a slip to take its PIN off the roll', () => {
+  /*
+   * The desk case: a slip comes back and the person holding it should not have
+   * to find six digits in a table of two thousand. The barcode is read, the PIN
+   * it names is deleted, and the votes cast with it go too -- which is the part
+   * worth checking against the database rather than against the screen.
+   */
+  let ballot = '';
+  let pin = '';
+  let camera = '';
+
+  beforeAll(async () => {
+    if (!HAVE_FFMPEG) return;
+    const { data: user } = await organizer.auth.getUser();
+    const { data: org } = await organizer.from('organizations')
+      .select('id').eq('owner_id', user.user!.id).limit(1).single();
+    const { data: b } = await organizer.from('ballots').insert({
+      org_id: org!.id, slug: uniqueSlug('scandel'), title: 'Scan to delete',
+      status: 'live', mode: 'open',
+    }).select('id').single();
+    ballot = b!.id;
+
+    const { data: q } = await organizer.from('questions_yes_no').insert({
+      ballot_id: ballot, prompt: 'Carry the motion', sort_order: 1, gate_open: true,
+    }).select('id').single();
+
+    const minted = await organizer.rpc('issue_tokens', { p_ballot: ballot, p_count: 2 });
+    pin = (minted.data as Array<{ pin: string }>)[0]!.pin;
+
+    // it votes, so there is something to take with it
+    await organizer.rpc('cast_yes_no', {
+      p_ballot: ballot, p_pin: pin, p_question: q!.id,
+      p_choice: 'yes', p_fingerprint: 'fp-scandel',
+    });
+
+    camera = `${tmpdir()}/votingstation-bar-${Date.now()}.y4m`;
+    await fakeBarcodeCamera(pin, camera);
+  });
+
+  afterAll(async () => {
+    if (!HAVE_FFMPEG) return;
+    if (camera) await rm(camera, { force: true });
+    if (ballot) await organizer.from('ballots').delete().eq('id', ballot);
+  });
+
+  test('the barcode is read, and the PIN and its votes go', async () => {
+    if (!HAVE_FFMPEG) return;
+
+    const votesBefore = await organizer.from('votes_yes_no')
+      .select('id', { count: 'exact', head: true }).eq('ballot_id', ballot);
+    expect(votesBefore.count).toBe(1);
+
+    const browser = await browserWatching(camera);
+    const page = await browser.newPage();
+    await page.setViewport({ width: 900, height: 1000 });
+
+    const { email, password } = credentials();
+    await page.goto(`${origin}/#/signin`, { waitUntil: 'networkidle0' });
+    await page.type('input[type=email]', email);
+    await page.type('input[type=password]', password);
+    await page.evaluate(() => {
+      [...document.querySelectorAll('button')]
+        .find((b) => (b as HTMLButtonElement).type === 'submit')!.click();
+    });
+    await page.waitForFunction(() => window.location.hash.startsWith('#/admin'), { timeout: 30000 });
+
+    await page.goto(`${origin}/#/manage/${ballot}`, { waitUntil: 'networkidle0' });
+    await clickByText(page, 'button', 'PINs');
+    await page.waitForSelector('table tbody tr', { timeout: 20000 });
+    await clickByText(page, 'button', 'Scan to delete');
+
+    // the camera finds it and stops to ask, with the vote count in the question
+    await page.waitForSelector('.scan-ask', { timeout: 40000 });
+    expect(await page.$eval('.scan-ask .pin-display', (n) => (n as HTMLElement).innerText.trim()))
+      .toBe(pin);
+    await waitForText(page, '1 vote will be deleted with it');
+
+    await page.evaluate(() => {
+      ([...document.querySelectorAll('.scan-ask button')] as HTMLButtonElement[])
+        .find((b) => b.innerText.trim() === 'Delete it')!.click();
+    });
+    await waitForText(page, `${pin} deleted`);
+
+    // the database, not the screen
+    const { data: left } = await organizer.from('ballot_tokens')
+      .select('pin').eq('ballot_id', ballot);
+    expect(left!.map((t) => t.pin)).not.toContain(pin);
+    expect(left).toHaveLength(1);
+
+    const votesAfter = await organizer.from('votes_yes_no')
+      .select('id', { count: 'exact', head: true }).eq('ballot_id', ballot);
+    expect(votesAfter.count).toBe(0);
+
+    await browser.close();
+  }, 90000);
 });

@@ -258,6 +258,53 @@ describe('the results page', () => {
 
     await organizer.from('ballots').update({ status: 'live' }).eq('id', ballotId);
   });
+
+  test('a voter who enters their PIN on a closed ballot is shown the published count', async () => {
+    /*
+     * A closed ballot has nothing to ask, but it has something to tell. The
+     * count shown is the public one -- the same call the results link makes --
+     * so an X-of-N question names who was elected and publishes no numbers,
+     * whoever is holding the PIN.
+     */
+    await organizer.from('ballots').update({ status: 'closed' }).eq('id', ballotId);
+
+    const page = await newPage();
+    await page.goto(`${origin}/#/vote/${ballotId}`, { waitUntil: 'networkidle0' });
+    await enterPin(page, pins[0]!);
+    await clickByText(page, 'button', 'Open my ballot');
+
+    await waitForText(page, 'This ballot is closed');
+    await waitForText(page, 'Adopt the minutes');
+    await waitForText(page, 'Ann Meyer');
+
+    // it is the published view, not the organizer's: no ballot box to vote in
+    const text = await page.evaluate(() => document.body.innerText);
+    expect(text).not.toContain('still open');
+    expect(await page.$('.pin-entry')).toBeNull();
+    await page.close();
+
+    await organizer.from('ballots').update({ status: 'live' }).eq('id', ballotId);
+  });
+
+  test('and is told only that it is closed when the ballot does not publish', async () => {
+    await organizer.from('ballots')
+      .update({ status: 'closed', results_public: false }).eq('id', ballotId);
+
+    const page = await newPage();
+    await page.goto(`${origin}/#/vote/${ballotId}`, { waitUntil: 'networkidle0' });
+    await enterPin(page, pins[0]!);
+    await clickByText(page, 'button', 'Open my ballot');
+
+    await page.waitForFunction(
+      () => document.body.innerText.toLowerCase().includes('closed'), { timeout: 15000 });
+    const text = await page.evaluate(() => document.body.innerText);
+    expect(text).not.toContain('This ballot is closed. These are its published results.');
+    expect(text).not.toContain('Ann Meyer');
+    await page.close();
+
+    await organizer.from('ballots')
+      .update({ status: 'live', results_public: true }).eq('id', ballotId);
+  });
 });
 
 describe('the organizer', () => {

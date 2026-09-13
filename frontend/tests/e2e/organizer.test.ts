@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Browser, Page } from 'puppeteer-core';
 import { anonClient, credentials, organizerClient, uniqueSlug } from '../helpers/env';
-import { clickByText, clickWithin, launchBrave, serveStatic, waitForText } from '../helpers/browser';
+import { clickByText, clickWithin, decodeBarcode, launchBrave, serveStatic, waitForText } from '../helpers/browser';
 
 const DIST = new URL('../../dist', import.meta.url).pathname;
 
@@ -856,11 +856,11 @@ test('a link handed out does not carry the privacy page with it', async () => {
 test('every slip carries the PIN as a code of its own, whatever the QR is set to', async () => {
   /*
    * The big code points at the ballot, and carries the PIN only when the
-   * organizer has asked it to. This one always carries the PIN and nothing
-   * else, so a scanner at the door reads the six digits off any slip either
-   * way. Decoded here rather than assumed: it is drawn by our own encoder, and
-   * six digits is a version 1 symbol, which is the smallest and coarsest of
-   * the three squares on a slip.
+   * organizer has asked it to. The barcode always carries the PIN and nothing
+   * else, so a hand-held scanner at the door reads the six digits off any slip
+   * either way. Decoded with ZXing rather than with our own encoder run
+   * backwards, so a wrong pattern table fails here instead of agreeing with
+   * itself.
    */
   const { data: user } = await organizer.auth.getUser();
   const { data: org } = await organizer.from('organizations')
@@ -886,7 +886,7 @@ test('every slip carries the PIN as a code of its own, whatever the QR is set to
     const out: string[] = [];
     for (const code of await page.$$('.slip-pin-code')) {
       const png = PNG.sync.read(Buffer.from(await code.screenshot({ encoding: 'binary' }) as Buffer));
-      out.push(jsQR(new Uint8ClampedArray(png.data), png.width, png.height)?.data ?? '(nothing)');
+      out.push(await decodeBarcode(png) ?? '(nothing)');
     }
     await page.emulateMediaType(undefined);
     return out;
@@ -900,21 +900,17 @@ test('every slip carries the PIN as a code of its own, whatever the QR is set to
   await clickByText(page, 'label', 'Put the PIN in the code as well');
   expect((await readPinCodes()).sort()).toEqual([...pins].sort());
 
-  // it is the last thing across the slip, and the three squares match in size.
-  // measured on paper: the sheet is display:none on screen, so every rectangle
-  // is zero unless print media is the one in force.
+  // it is the last thing across the slip, and narrow. measured on paper: the
+  // sheet is display:none on screen, so every rectangle is zero unless print
+  // media is the one in force.
   await page.emulateMediaType('print');
   const geometry = await page.evaluate(() => {
     const slip = document.querySelector('.slip')!;
-    // the dark part, not the box: an SVG's viewBox includes the code's quiet
-    // zone -- four blank modules a side -- and the two codes hold different
-    // amounts, so the same box would print them at different sizes.
     const box = (sel: string) => {
       const el = slip.querySelector(sel) as SVGSVGElement | null;
       if (!el) return null;
       const r = el.getBoundingClientRect();
-      const span = el.viewBox.baseVal.width;
-      return { right: Math.round(r.right), ink: (r.width * (span - 8)) / span };
+      return { right: Math.round(r.right), width: r.width, height: r.height };
     };
     return {
       children: [...slip.children].map((c) => c.getAttribute('class') ?? ''),
@@ -926,8 +922,10 @@ test('every slip carries the PIN as a code of its own, whatever the QR is set to
 
   expect(geometry.children[geometry.children.length - 1]).toContain('slip-pin-code');
   expect(geometry.pin!.right).toBeGreaterThan(geometry.qr!.right);
-  // the boxes differ on purpose; what has to match is the ink inside them
-  expect(Math.abs(geometry.pin!.ink - geometry.qr!.ink)).toBeLessThanOrEqual(2);
+  // a row of bars, not a square: wider than it is tall, and the smaller of the
+  // two codes, which is the whole point of it being a barcode
+  expect(geometry.pin!.width).toBeGreaterThan(geometry.pin!.height);
+  expect(geometry.pin!.width).toBeLessThan(geometry.qr!.width);
 
   await organizer.from('ballots').delete().eq('id', ballot);
   await page.close();
