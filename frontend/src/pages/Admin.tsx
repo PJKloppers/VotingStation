@@ -669,7 +669,6 @@ function NewBallot({ orgId, orgSlug, count, cap, onDone, onRefused }: {
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState('');
   const [mode, setMode] = useState<Ballot['mode']>('gated');
-  const [anonymous, setAnonymous] = useState(true);
   const [publish, setPublish] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -683,9 +682,9 @@ function NewBallot({ orgId, orgSlug, count, cap, onDone, onRefused }: {
     try {
       const ballot = await api.createBallot({
         org_id: orgId, title, slug: slugify(title), description: '',
-        mode, anonymous, results_public: publish,
+        mode, results_public: publish,
       });
-      setTitle(''); setMode('gated'); setAnonymous(true); setPublish(true);
+      setTitle(''); setMode('gated'); setPublish(true);
       setOpen(false);
       onDone();
       navigate(`/manage/${ballot.id}`);
@@ -770,15 +769,13 @@ function NewBallot({ orgId, orgSlug, count, cap, onDone, onRefused }: {
             </div>
           </Step>
 
-          <Step n={3} title="Who sees what?">
-            {/* Both of these are hard to change later for good reasons: the
-                database refuses to switch anonymity once a vote exists, because
-                it would strand every key already recorded. Better asked now
-                than discovered on the Settings tab afterwards. */}
-            <Check label="Secret ballot" checked={anonymous} onChange={setAnonymous}
-                   help="Votes are recorded against a one-way pseudonym, not the PIN. This cannot be changed once anyone has voted." />
+          <Step n={3} title="Who sees the count?">
             <Check label="Publish the results" checked={publish} onChange={setPublish}
                    help="Anyone with the link sees each question's count once its gate closes. Off keeps them to you." />
+            <p className="faint">
+              A vote is kept against the PIN that cast it, and nothing records who
+              was handed which slip. No one but you can read that column.
+            </p>
           </Step>
         </>
       ) : null}

@@ -55,7 +55,6 @@ export function Manage({ ballotId }: { ballotId: string }) {
             </Pill>
             <span className="faint">
               {ballot.mode === 'gated' ? 'One question at a time' : 'All questions at once'}
-              {ballot.anonymous ? ' · anonymous' : ' · named'}
             </span>
             <Expiry ballot={ballot} onRenewed={load} />
           </div>
@@ -433,9 +432,6 @@ function Settings({ ballot, onSaved }: { ballot: Ballot; onSaved: () => void }) 
         <Check label="Allow changing a vote" checked={v('allow_vote_change')}
                onChange={(x) => set('allow_vote_change', x)}
                help="A voter may reopen a question while its gate is open. The earlier ballot is superseded, never deleted." />
-        <Check label="Anonymous ballots" checked={v('anonymous')}
-               onChange={(x) => set('anonymous', x)}
-               help="Store a salted hash instead of the PIN. Cannot be changed once a vote has been cast." />
         <Check label="All questions required (open mode)" checked={v('require_all')}
                onChange={(x) => set('require_all', x)} />
         <Check label="All PINs must vote" checked={v('require_all_pins')}

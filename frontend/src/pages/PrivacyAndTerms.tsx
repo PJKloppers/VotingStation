@@ -182,30 +182,30 @@ export function PrivacyAndTerms() {
 
       <Section id="recorded">
         <p>
-          <strong>Every ballot is anonymous unless the organizer turns that off.</strong>{' '}
-          Anonymous is the default a new ballot is created with.
+          <strong>A vote is kept against the PIN that cast it.</strong>{' '}
+          Not against a name, an address or an account, because the system holds none of
+          those for a voter. A PIN is six digits on a slip of paper; who was handed which
+          slip is not recorded anywhere, and cannot be worked out from anything stored.
         </p>
         <p>
-          On an anonymous ballot a vote is stored against a pseudonym rather than a PIN:
-          the first 32 hex characters of a SHA-256 hash over the PIN joined to a salt
-          generated for that ballot alone. The salt sits in a column that is excluded from
-          every grant in the database — no browser can read it, including the browser of
-          the organizer who owns the ballot — and the function that computes the pseudonym
-          is not on the public API either. So a vote row carries nothing that anyone
-          working through the app can turn back into a PIN.
+          The column that names the PIN behind a vote is readable by nobody through the
+          API — not the public, not a signed-in organizer, not even the one who owns the
+          ballot. What a published result shows is the count and, on an election, who was
+          elected. It does not show who voted which way.
         </p>
         <p>
-          On a ballot where anonymity has been turned off, the vote is deliberately
-          attributable: the row records the id of the PIN that cast it, and the pseudonym
-          column holds the plain text <code>pin:</code> followed by the six digits. A named
-          vote being named is the point of the setting. That pseudonym column is not
-          readable through the API by anyone — see <Anchor to="limits">known limits</Anchor>{' '}
-          for what that fixed — so what a reader of a named ballot can follow is the
-          opaque id of the PIN, not the PIN.
+          Earlier ballots used a pseudonym instead: a salted hash of the PIN. That is no
+          longer offered, and the honest reason is that it did not do what it looked like
+          it did. It kept a working credential out of the vote table, which is worth
+          something, and it stopped anyone who came by the vote rows alone from reading
+          PINs out of them. It never protected a voter from the organizer, who holds every
+          PIN in plain text and had more than one way to put a PIN beside a vote. Ballots
+          created under it keep their pseudonyms; nothing was rewritten.
         </p>
         <p>
-          <strong>Anonymity cannot be changed once a vote exists.</strong> The database
-          refuses the edit, because switching would strand every key already recorded.
+          The row also carries the id of the PIN — a random identifier, not the digits.
+          That is what lets a voter change their answer where the ballot allows it, and
+          what lets an organizer take a PIN out of circulation and its votes with it.
         </p>
         <p>
           <strong>Changing a vote does not erase the old one.</strong> Where the organizer
@@ -214,10 +214,10 @@ export function PrivacyAndTerms() {
           table until the ballot is deleted.
         </p>
         <p>
-          <strong>One pseudonym per PIN per ballot.</strong> The same value stands for that
-          voter on every question of that ballot. Nobody can say who it is, but anyone who
-          can read the published rows can see that one voter answered two questions a
-          particular way.
+          <strong>One key per PIN per ballot.</strong> The same value stands for that
+          voter on every question of that ballot. It is not readable through the app, but
+          it does mean a voter’s answers hang together: whoever can read the rows directly
+          can see that one voter answered two questions a particular way.
         </p>
       </Section>
 
@@ -263,7 +263,7 @@ export function PrivacyAndTerms() {
             table whatsoever — a voter’s own PIN is only ever checked inside a function.
             A signed-in organizer reaches the PINs on their own ballots and no others.
           </li>
-          <li><strong>The salt</strong> behind the anonymous pseudonym.</li>
+          <li><strong>The salt</strong> behind the pseudonyms older ballots used.</li>
           <li><strong>The failed-attempt counters.</strong></li>
           <li>
             <strong>The record of what the retention job has deleted</strong> — see{' '}
@@ -289,12 +289,12 @@ export function PrivacyAndTerms() {
 
       <Section id="limits">
         <div className="doc-callout">
-          <h3>A named ballot used to publish its PINs. It no longer does.</h3>
+          <h3>Ballots once published their PINs. They no longer do.</h3>
           <p>
-            On a ballot with anonymity turned off, the pseudonym column holds{' '}
-            <code>pin:</code> and the six digits, and that column was part of the rows that
-            become publicly readable once a question finishes — so anyone could read a
-            PIN back out, and use it to vote on any question of that ballot still open.
+            Votes are filed against the PIN that cast them, and that column was part of
+            the rows that become publicly readable once a question finishes — so anyone
+            could read a PIN back out, and use it to vote on any question of that ballot
+            still open. It is the reason the column is now readable by nobody.
           </p>
           <p>
             The anonymous and signed-in roles now hold no permission on that column at all,
@@ -311,11 +311,26 @@ export function PrivacyAndTerms() {
         <p>Other things that are true and would be easier to leave unsaid:</p>
         <ul>
           <li>
-            <strong>An organizer can break anonymity by elimination.</strong> Resetting one
-            PIN voids exactly that PIN’s votes and deleting one removes them, so an
-            organizer watching which rows change learns how that PIN voted. Anonymity holds
-            against the public and against ordinary inspection; it does not hold against an
-            organizer who sets out to break it.
+            <strong>A ballot is not secret from the person running it.</strong> The
+            organizer holds every PIN in plain text and the votes are filed against PINs,
+            so anyone with access to the database behind the app can see who voted how.
+            Nothing in the app shows them, and no role a browser can hold may read that
+            column — but do not promise a room more secrecy than that.
+          </li>
+          <li>
+            <strong>And a different design would not fix it</strong> while keeping what
+            this system does. Anyone who can void one voter’s votes and also see the
+            count learns how that voter voted, because a total that moves by one names
+            the choice. Real secret voting separates the roll from the ballot box, and
+            the price is that nobody — the organizer included — can find or remove one
+            voter’s ballot afterwards. This system needs to be able to, so it took the
+            other side of that trade.
+          </li>
+          <li>
+            <strong>What a PIN is worth as a name.</strong> Six digits, and nothing else.
+            Nothing here records who was handed which slip, so what a vote is attributed
+            to is a piece of paper rather than a person — unless somebody kept their own
+            list of who got which, which is outside this system and its business.
           </li>
           <li>
             <strong>Anonymity is a matter of permissions, not of cryptography.</strong> The
@@ -448,10 +463,12 @@ export function PrivacyAndTerms() {
           For their own organizations and nobody else’s, an organizer can see every ballot
           and its settings, every question, every PIN in plain text — they minted them —
           the full count at any time including while voting is open, how many PINs have not
-          yet answered a given question, and, on a ballot that is not anonymous, which PIN
-          cast which vote. They cannot read the salt, and on an anonymous ballot they
-          cannot link a vote to a PIN through the app; <Anchor to="limits">known limits</Anchor>{' '}
-          says what they can do around that.
+          yet answered a given question. Which PIN cast which vote is not shown to them
+          anywhere in the app, and no role a browser holds may read that column — but the
+          votes are filed against PINs and the organizer holds the PINs, so do not treat a
+          ballot as secret from the person running it.{' '}
+          <Anchor to="limits">Known limits</Anchor> says why that is not fixable while
+          keeping the things this system does.
         </p>
         <p>
           They cannot see another organizer’s organizations, ballots or PINs. That was once
@@ -464,10 +481,9 @@ export function PrivacyAndTerms() {
       <Section id="removal">
         <p>
           <strong>If you are a voter</strong>, there is most likely nothing here that is
-          yours to ask about. An anonymous vote is not linked to you by anything this
-          system holds, and a named one is linked to a PIN rather than to a person. The
-          link from a PIN to a human being exists only where the organizer keeps it, on
-          their own list, outside this app. Ask them.
+          yours to ask about. A vote is linked to a PIN, and a PIN is six digits on a
+          slip of paper. The link from a PIN to a human being exists only where the
+          organizer keeps it, on their own list, outside this app. Ask them.
         </p>
         <p>
           <strong>If you are an organizer</strong>, you can delete a ballot, a question, an
@@ -513,8 +529,8 @@ export function PrivacyAndTerms() {
           with the law where they are; for everything they type into a question, an option,
           an organization’s description or its contact field; for having the right to use
           the logo they upload; and for the consequences of publishing a result. The
-          organizer, not us, chooses whether a ballot is anonymous and whether it publishes
-          — and the anonymity choice cannot be undone once a vote exists.
+          organizer, not us, chooses whether a ballot publishes its results, and how much
+          secrecy to promise the room.
         </p>
         <p>
           <strong>Fair use.</strong> Do not guess PINs. Do not try to read what the rules

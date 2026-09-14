@@ -159,10 +159,20 @@ says how many are outstanding; the Live tab shows the same count per question.
   `UPDATE` or `DELETE` grant for anyone. Votes arrive only through the `cast_*`
   functions, which check the PIN, the gate, and the question's own rules.
 
-With anonymous ballots on (the default), each vote carries a salted SHA-256
-pseudonym of the PIN rather than the PIN itself. The salt lives in a column
-nothing can read, and swapping a ballot between anonymous and named is refused
-once a vote exists — it would strand every key already recorded.
+A vote is filed against the PIN that cast it, and `voter_key` carries no grant
+for any role a browser can hold — so nothing reads it through the API, not the
+public and not the organizer who owns the ballot. A PIN is six digits on a slip
+and nothing here records who was handed which, so what a vote is attributed to
+is a piece of paper rather than a person.
+
+Anonymous ballots — a salted SHA-256 pseudonym of the PIN instead — are no
+longer offered. An investigation of what that was actually worth found it never
+protected a voter from the organizer, who holds every PIN in plain text; the
+plainest break was a timestamp, since `ballot_tokens.last_vote_at` was written
+in the same transaction as the vote's `created_at` and so matched it to the
+microsecond, which one join turned into a name for every row. That is closed,
+and ballots already run under the pseudonym keep theirs — the hashing stays
+because their keys are computable no other way.
 
 Failed PIN attempts are counted per browser, twelve in fifteen minutes. Only
 *failures* count, so a voter reloading the lobby for an hour is never shut out

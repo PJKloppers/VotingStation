@@ -1477,11 +1477,11 @@ test('a question is added complete in one pass, options and seats and all', asyn
 
 test('a new ballot is created with how it runs already decided', async () => {
   /*
-   * Mode and anonymity used to be defaults an organizer met later on the
-   * Settings tab, which is a poor place to meet them: anonymity in particular
-   * the database refuses to change once a vote exists, because switching would
-   * strand every key already recorded. Asked at the start, they are a choice;
-   * found afterwards, they are a fact.
+   * How the meeting runs used to be a default an organizer met later on the
+   * Settings tab, which is a poor place to meet the thing that decides whether
+   * the chair opens questions one at a time or the whole ballot sits in front
+   * of everyone. Asked at the start it is a choice; found afterwards it is a
+   * fact.
    */
   const page = await signedInPage();
   let made = '';
@@ -1501,7 +1501,7 @@ test('a new ballot is created with how it runs already decided', async () => {
 
     // away from both defaults, so a pass cannot be the defaults passing
     await clickByText(page, 'button', 'All at once');
-    await clickByText(page, 'label', 'Secret ballot');
+    await clickByText(page, 'label', 'Publish the results');
 
     await clickByText(page, 'button', 'Create ballot');
     await page.waitForFunction(
@@ -1513,8 +1513,8 @@ test('a new ballot is created with how it runs already decided', async () => {
       .select('title, mode, anonymous, results_public, status').eq('id', made).single();
     expect(data!.title).toBe(name);
     expect(data!.mode).toBe('open');
-    expect(data!.anonymous).toBe(false);
-    expect(data!.results_public).toBe(true);   // left on, and stayed on
+    expect(data!.results_public).toBe(false);  // turned off in the form
+    expect(data!.anonymous).toBe(false);       // no longer offered, and not set
     expect(data!.status).toBe('draft');
   } finally {
     if (made) await organizer.from('ballots').delete().eq('id', made);

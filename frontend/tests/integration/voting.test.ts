@@ -397,7 +397,9 @@ describe('the organizer', () => {
     await call<Answer>(voter, 'cast_yes_no', {
       p_ballot: ballotId, p_pin: pins[0]!, p_question: motionId, p_choice: 'yes', p_fingerprint: 'fp-0',
     });
-    const { error } = await organizer.from('ballots').update({ anonymous: false }).eq('id', ballotId);
+    // ballots are named now, so the switch that has to be refused is the one
+    // towards the old scheme -- it would strand every key already recorded
+    const { error } = await organizer.from('ballots').update({ anonymous: true }).eq('id', ballotId);
     expect(error?.message ?? '').toContain('Anonymity cannot be changed');
   });
 });
@@ -2139,4 +2141,103 @@ describe('is this organization slug free', () => {
       throw new Error(error.message);
     }
   }
+});
+
+describe('an anonymous ballot keeps no clock', () => {
+  /*
+   * A timestamp was linking every anonymous vote back to the PIN that cast it.
+   * app_after_vote set ballot_tokens.last_vote_at = now() in the same
+   * transaction as the vote's own created_at default, so the two matched to the
+   * microsecond -- and both are readable by the organizer. One join named the
+   * voter behind every row, passively, altering nothing.
+   *
+   * The salt never protected against this. It keeps the PIN out of the vote
+   * table; it cannot help when a second table keeps the same clock.
+   */
+  /** A ballot of the old shape, which is the only thing this protects. */
+  const anonymousBallot = async () => {
+    const { data: user } = await organizer.auth.getUser();
+    const { data: org } = await organizer.from('organizations')
+      .select('id').eq('owner_id', user.user!.id).limit(1).single();
+    const { data: b } = await organizer.from('ballots').insert({
+      org_id: org!.id, slug: uniqueSlug('legacy-anon'), title: 'Legacy anonymous',
+      status: 'live', mode: 'open', anonymous: true,
+    }).select('id').single();
+    const { data: q } = await organizer.from('questions_yes_no').insert({
+      ballot_id: b!.id, prompt: 'A motion', sort_order: 1, gate_open: true,
+    }).select('id').single();
+    const minted = await call<Array<{ pin: string }>>(organizer, 'issue_tokens',
+      { p_ballot: b!.id, p_count: 1 });
+    return { ballot: b!.id, question: q!.id, pin: minted[0]!.pin };
+  };
+
+  test('voting on an anonymous ballot records no time against the PIN', async () => {
+    const { ballot, question, pin } = await anonymousBallot();
+
+    const cast = await call<Answer>(voter, 'cast_yes_no', {
+      p_ballot: ballot, p_pin: pin, p_question: question,
+      p_choice: 'yes', p_fingerprint: 'fp-clock',
+    });
+    expect(cast.ok).toBe(true);
+
+    const { data: after } = await organizer.from('ballot_tokens')
+      .select('last_vote_at, questions_voted').eq('ballot_id', ballot).single();
+    expect(after!.last_vote_at).toBeNull();
+    // the count still moves: progress never needed a timestamp
+    expect(after!.questions_voted).toBeGreaterThan(0);
+
+    // and so the join that read the ballot finds nothing
+    const { data: votes } = await organizer.from('votes_yes_no')
+      .select('created_at').eq('ballot_id', ballot);
+    expect(votes!.length).toBeGreaterThan(0);
+    expect(votes!.some((v) => v.created_at === after!.last_vote_at)).toBe(false);
+
+    await organizer.from('ballots').delete().eq('id', ballot);
+  });
+
+  test('a named ballot keeps its timestamp, where the vote is attributable anyway', async () => {
+    const { data: user } = await organizer.auth.getUser();
+    const { data: org } = await organizer.from('organizations')
+      .select('id').eq('owner_id', user.user!.id).limit(1).single();
+    const { data: b } = await organizer.from('ballots').insert({
+      org_id: org!.id, slug: uniqueSlug('named-clock'), title: 'Named clock',
+      status: 'live', mode: 'open', anonymous: false,
+    }).select('id').single();
+    const { data: q } = await organizer.from('questions_yes_no').insert({
+      ballot_id: b!.id, prompt: 'A motion', sort_order: 1, gate_open: true,
+    }).select('id').single();
+    const minted = await call<Array<{ pin: string }>>(organizer, 'issue_tokens',
+      { p_ballot: b!.id, p_count: 1 });
+
+    await call(voter, 'cast_yes_no', {
+      p_ballot: b!.id, p_pin: minted[0]!.pin, p_question: q!.id,
+      p_choice: 'yes', p_fingerprint: 'fp-named-clock',
+    });
+
+    const { data: tok } = await organizer.from('ballot_tokens')
+      .select('last_vote_at').eq('ballot_id', b!.id).single();
+    expect(tok!.last_vote_at).not.toBeNull();
+
+    await organizer.from('ballots').delete().eq('id', b!.id);
+  });
+});
+
+describe('the internals are not on the browser\'s reach', () => {
+  test('app_authorise will not hand out a pseudonym', async () => {
+    // it returns voter_key, which is the one value the salt exists to protect
+    for (const client of [voter, organizer]) {
+      const { error } = await client.rpc('app_authorise', {
+        p_ballot: ballotId, p_pin: pins[0]!, p_fingerprint: 'probe',
+      });
+      expect(error?.message ?? '').toContain('permission denied');
+    }
+  });
+
+  test('but voting, which uses it inside, still works', async () => {
+    const answer = await call<Answer>(voter, 'cast_yes_no', {
+      p_ballot: ballotId, p_pin: pins[0]!, p_question: motionId,
+      p_choice: 'no', p_fingerprint: 'fp-still-works',
+    });
+    expect(answer.ok).toBe(true);
+  });
 });

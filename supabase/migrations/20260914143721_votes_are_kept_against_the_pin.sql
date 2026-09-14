@@ -1,0 +1,24 @@
+-- Anonymous ballots are no longer offered. New ballots keep votes against the
+-- PIN that cast them.
+--
+-- The pseudonym was a salted hash of the PIN, and the investigation that
+-- prompted this established what it was actually worth: it kept a working
+-- credential out of the vote table, and it stopped a reader of the vote rows
+-- alone from linking them to PINs. It never protected a voter from the
+-- organizer, who holds every PIN in plain text and had more than one way to
+-- put a PIN beside a vote.
+--
+-- And a PIN is not a name. Nothing in this system records who was handed which
+-- slip, so a vote filed against a PIN is already as unattributable as the
+-- paper allows -- while the column that would spell it out, votes.voter_key,
+-- is readable by nobody through the API (20260913093349). The anonymity that
+-- mattered was never the hash.
+--
+-- The column and the hashing stay, and that is deliberate: ballots already run
+-- under the old scheme have their votes filed under hashes, and the key for
+-- those rows is computable only by continuing to hash. Changing `anonymous` on
+-- a ballot with votes is refused by app_guard_anonymity for the same reason.
+-- What changes is the default and what the app offers -- nothing is rewritten,
+-- and no existing ballot moves.
+
+alter table public.ballots alter column anonymous set default false;
