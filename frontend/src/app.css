@@ -980,3 +980,41 @@ button.share-copy[data-state="copied"]:hover {
 /* One option pool on the pools page: a row that opens into its list. */
 .pool { border-top: 1px solid var(--rule-soft); padding: 10px 0 4px; }
 .pool:first-of-type { border-top: 0; }
+
+/* What the slug field says about itself while it is being typed. */
+.slug-status {
+  display: flex; align-items: center; gap: 7px;
+  margin: -8px 0 14px;
+  font-size: 0.86rem; line-height: 1.5;
+}
+.slug-status.good    { color: var(--carried); }
+.slug-status.bad     { color: var(--defeated); }
+.slug-status.checking,
+.slug-status.faint   { color: var(--ink-faint); }
+
+/* Turning while the answer is outstanding, so a slow network reads as waiting
+   rather than as nothing happening. */
+.slug-spinner {
+  width: 12px; height: 12px; flex: none;
+  border: 2px solid var(--rule);
+  border-top-color: var(--ink-faint);
+  border-radius: 50%;
+  animation: slug-spin 700ms linear infinite;
+}
+@keyframes slug-spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .slug-spinner { animation: none; }
+}
+
+/* The address at the top of the account page. An email is one unbroken token,
+   so a long one would run off the side of a phone; it may break anywhere, and
+   steps down a size where there is least room. */
+.account-email {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.25;
+}
+@media (max-width: 480px) {
+  .account-email { font-size: 1.4rem; }
+}

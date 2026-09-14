@@ -873,6 +873,7 @@ test('every slip carries the PIN as a code of its own, whatever the QR is set to
   const pins = (minted.data as Array<{ pin: string }>).map((t) => t.pin);
 
   const page = await signedInPage();
+  try {
   await page.setViewport({ width: 900, height: 900, deviceScaleFactor: 3 });
   await page.goto(`${origin}/#/manage/${ballot}`, { waitUntil: 'networkidle0' });
   await clickByText(page, 'button', 'PINs');
@@ -927,9 +928,12 @@ test('every slip carries the PIN as a code of its own, whatever the QR is set to
   // it up, since its length is what decides whether it reads
   expect(geometry.pin!.height).toBeGreaterThan(geometry.pin!.width);
   expect(geometry.pin!.width).toBeLessThan(geometry.qr!.width);
-
-  await organizer.from('ballots').delete().eq('id', ballot);
-  await page.close();
+  } finally {
+    // in a finally because it was not: seven of these ballots collected on the
+    // test account from runs that threw before reaching this line
+    await organizer.from('ballots').delete().eq('id', ballot);
+    await page.close();
+  }
 });
 
 test('an organization can be deleted from its settings, and takes its ballots', async () => {
@@ -1190,6 +1194,83 @@ test('the account page offers a passkey, and lists the ones already there', asyn
 
   // and the library is configured for it -- an unflagged client throws instead
   expect(failures.join(' ')).not.toMatch(/passkey.*(not enabled|experimental)/i);
+
+  await page.close();
+});
+
+test('a long address does not run off the side of the account page', async () => {
+  /*
+   * An email is one unbroken token as far as the browser is concerned, so a
+   * long one used to run straight off the side rather than wrap. The address
+   * here is put in by hand because the test account's own is short -- what is
+   * being measured is the heading's behaviour, not this account's address.
+   */
+  const page = await signedInPage();
+  await page.setViewport({ width: 380, height: 900 });
+  await page.goto(`${origin}/#/account`, { waitUntil: 'networkidle0' });
+  await waitForText(page, 'Delete this account');
+
+  const overflow = await page.evaluate(() => {
+    const h = document.querySelector('h1.account-email');
+    if (!h) return null;
+    h.textContent =
+      'the.longest.possible.committee.secretary.address@a-very-long-organisation-domain.example.org';
+    return document.documentElement.scrollWidth - document.documentElement.clientWidth;
+  });
+
+  expect(overflow).not.toBeNull();
+  expect(overflow).toBe(0);
+  await page.close();
+});
+
+test('the new-organization form says whether the short name is free', async () => {
+  const page = await signedInPage();
+  await page.goto(`${origin}/#/admin`, { waitUntil: 'networkidle0' });
+  await clickByText(page, 'button', 'New organization');
+  await page.waitForSelector('input[name="org_slug"]', { timeout: 15000 });
+
+  const status = () => page.$eval('.slug-status', (n) => (n as HTMLElement).innerText.trim())
+    .catch(() => '');
+  const submitDisabled = () => page.$eval('.create-actions .primary',
+    (b) => (b as HTMLButtonElement).disabled);
+
+  // a name whose slug is one this account already holds
+  const { data: mine } = await organizer.from('organizations')
+    .select('slug').limit(1).single();
+  await page.type('input[name="org_name"]', mine!.slug.replace(/-/g, ' '));
+
+  await page.waitForFunction(
+    () => /is taken/.test(document.querySelector('.slug-status')?.textContent ?? '')
+      && (document.querySelector('.create-actions .primary') as HTMLButtonElement)?.disabled,
+    { timeout: 20000 });
+  expect(await submitDisabled()).toBe(true);
+
+  // and one nobody has
+  const free = `free-${Date.now().toString(36)}`;
+  await page.$eval('input[name="org_name"]', (el) => { (el as HTMLInputElement).value = ''; });
+  await page.evaluate((name: string) => {
+    const el = document.querySelector('input[name="org_name"]') as HTMLInputElement;
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!
+      .set!.call(el, name);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  }, free);
+
+  /*
+   * Waited for rather than read once. The answer arrives from the network a
+   * debounce after typing stops, so asserting the button the instant the text
+   * changes is a race -- and one this test lost before it was written this way.
+   */
+  await page.waitForFunction(
+    () => /is free/.test(document.querySelector('.slug-status')?.textContent ?? '')
+      && !(document.querySelector('.create-actions .primary') as HTMLButtonElement)?.disabled,
+    { timeout: 20000 });
+  expect(await status()).toContain('is free');
+  expect(await submitDisabled()).toBe(false);
+
+  // nothing was created by looking
+  const { count } = await organizer.from('organizations')
+    .select('id', { count: 'exact', head: true }).eq('slug', free);
+  expect(count).toBe(0);
 
   await page.close();
 });

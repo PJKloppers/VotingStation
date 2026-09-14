@@ -2060,3 +2060,83 @@ describe('option pools', () => {
     expect(data ?? []).toHaveLength(0);
   });
 });
+
+describe('is this organization slug free', () => {
+  /*
+   * The question a client cannot answer for itself. Organizations are
+   * owner-only, so the one slug that matters -- somebody else's -- is invisible
+   * from here until the insert fails on it.
+   */
+  test('a slug that exists is not available', async () => {
+    const { data: mine } = await organizer.from('organizations')
+      .select('slug').limit(1).single();
+    const free = await call<boolean>(organizer, 'organization_slug_available', {
+      p_slug: mine!.slug,
+    });
+    expect(free).toBe(false);
+  });
+
+  test('one that does not exist is', async () => {
+    const free = await call<boolean>(organizer, 'organization_slug_available', {
+      p_slug: uniqueSlug('never-used'),
+    });
+    expect(free).toBe(true);
+  });
+
+  test('it sees past row level security, which is the whole point', async () => {
+    // a slug belonging to the *other* organizer: invisible to this one through
+    // the table, and the reason a plain select could never answer this
+    const other = await otherOrganizerClient();
+    const { data: user } = await other.auth.getUser();
+    const taken = uniqueSlug('theirs');
+    await other.from('organizations')
+      .insert({ owner_id: user.user!.id, slug: taken, name: 'Not yours' });
+
+    const { data: visible } = await organizer.from('organizations')
+      .select('id').eq('slug', taken);
+    expect(visible ?? []).toHaveLength(0);          // cannot see it
+
+    const free = await call<boolean>(organizer, 'organization_slug_available', {
+      p_slug: taken,
+    });
+    expect(free).toBe(false);                        // but is told it is taken
+
+    await other.from('organizations').delete().eq('slug', taken);
+    await other.auth.signOut();
+  });
+
+  test('it answers only yes or no, never whose it is', async () => {
+    const { data: mine } = await organizer.from('organizations')
+      .select('slug').limit(1).single();
+    const { data } = await organizer.rpc('organization_slug_available', {
+      p_slug: mine!.slug,
+    });
+    expect(typeof data).toBe('boolean');
+  });
+
+  test('an anonymous caller cannot ask at all', async () => {
+    const { error } = await voter.rpc('organization_slug_available', { p_slug: 'anything' });
+    expect(error?.message ?? '').toContain('permission denied');
+  });
+
+  test('taking a slug that exists is refused, and readably', async () => {
+    const { data: user } = await organizer.auth.getUser();
+    const { data: mine } = await organizer.from('organizations')
+      .select('slug').limit(1).single();
+
+    await expect(api_createOrganizationLike(user.user!.id, mine!.slug))
+      .rejects.toThrow(/already taken/i);
+  });
+
+  /** The same insert the client makes, through the same error translation. */
+  async function api_createOrganizationLike(owner: string, slug: string) {
+    const { error } = await organizer.from('organizations')
+      .insert({ owner_id: owner, slug, name: 'Clash' });
+    if (error) {
+      if (error.code === '23505' && /slug/.test(error.message)) {
+        throw new Error(`The short name “${slug}” is already taken.`);
+      }
+      throw new Error(error.message);
+    }
+  }
+});

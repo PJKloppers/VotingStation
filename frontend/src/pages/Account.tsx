@@ -29,7 +29,10 @@ export function Account({ session }: { session: Session }) {
       <div className="stack">
         <div>
           <p className="eyebrow">Account</p>
-          <h1>{email}</h1>
+          {/* An address is one unbroken token as far as the browser is
+              concerned, so a long one runs straight off the side rather than
+              wrapping. It is told it may break anywhere. */}
+          <h1 className="account-email">{email}</h1>
           {/* Only worth saying when it explains something: a Google account has
               no password of its own to change here. */}
           {google ? <p className="faint">Signed in with Google.</p> : null}

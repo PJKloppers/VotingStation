@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { parseOptionList, splitList, MAX_LABEL_LENGTH } from '../../src/lib/options';
+import { slugify, slugProblem } from '../../src/lib/slug';
 
 describe('splitting a pasted list', () => {
   test('takes one name', () => {
@@ -76,5 +77,40 @@ describe('parsing against what a question already has', () => {
   test('allows a label of exactly the maximum', () => {
     const edge = 'x'.repeat(MAX_LABEL_LENGTH);
     expect(parseOptionList(edge).labels).toEqual([edge]);
+  });
+});
+
+describe('what the database will accept as a slug', () => {
+  /*
+   * These mirror `organizations_slug_check`. They are here so the form can say
+   * what is wrong while it is being typed, rather than sending a name the
+   * database will bounce with a sentence about a check constraint.
+   */
+  test('too short, and only just', () => {
+    expect(slugProblem('ab')).toContain('three characters');
+    expect(slugProblem('abc')).toBeNull();
+  });
+
+  test('too long, and only just', () => {
+    expect(slugProblem('a'.repeat(50))).toBeNull();
+    expect(slugProblem('a'.repeat(51))).toContain('fifty');
+  });
+
+  test('a dash may not start or end it', () => {
+    expect(slugProblem('-society')).not.toBeNull();
+    expect(slugProblem('society-')).not.toBeNull();
+    expect(slugProblem('demo-society')).toBeNull();
+  });
+
+  test('nothing typed yet is not a fault to report', () => {
+    expect(slugProblem('')).toBeNull();
+  });
+
+  test('what slugify makes of a real name passes', () => {
+    for (const name of ['Demo Society', 'St. Andrew’s Parish Council',
+                        'Workers’ Union 2026', 'A B']) {
+      const made = slugify(name, 'organization');
+      expect(slugProblem(made)).toBeNull();
+    }
   });
 });

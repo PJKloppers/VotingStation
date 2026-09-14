@@ -5,7 +5,7 @@ import * as api from '../lib/api';
 import { appBase, href, navigate } from '../lib/router';
 import type { Ballot, Organization, OrganizationImage } from '../lib/types';
 import { encodeQr, QUIET, qrPath, type QrCode } from '../lib/qr';
-import { slugify } from '../lib/slug';
+import { slugify, slugProblem } from '../lib/slug';
 import { Banner, Card, Empty, Field, Modal, Pill, Spinner } from '../components/ui';
 
 export function Admin() {
@@ -486,6 +486,60 @@ function BallotRow({ ballot, onDeleted }: { ballot: Ballot; onDeleted: () => voi
  * variant keeps the page to itself: it says what an organization is for, and
  * what comes after naming one.
  */
+/** What we currently believe about a slug the organizer is typing. */
+type Availability = 'idle' | 'checking' | 'free' | 'taken' | 'unknown';
+
+/**
+ * Asks the database whether a slug is free, a moment after typing stops.
+ *
+ * Debounced, because this fires on a keystroke and the answer to "dem" is of no
+ * use to anybody. Out-of-order replies are dropped by sequence rather than by
+ * timing: a slow answer for "demo-so" must not overwrite a fast one for
+ * "demo-society", which is the bug this kind of field always has.
+ */
+function useSlugAvailability(slug: string): Availability {
+  const [state, setState] = useState<Availability>('idle');
+  const latest = useRef(0);
+
+  useEffect(() => {
+    if (!slug) { setState('idle'); return; }
+    setState('checking');
+    const mine = ++latest.current;
+    const timer = setTimeout(() => {
+      api.organizationSlugAvailable(slug)
+        .then((free) => { if (mine === latest.current) setState(free ? 'free' : 'taken'); })
+        .catch(() => { if (mine === latest.current) setState('unknown'); });
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [slug]);
+
+  return state;
+}
+
+function SlugStatus({ slug, shape, state }: {
+  slug: string; shape: string | null; state: Availability;
+}) {
+  if (!slug) return null;
+
+  const [tone, said] = shape !== null
+    ? ['bad', shape] as const
+    : state === 'checking' ? ['checking', 'Checking whether that is free\u2026'] as const
+    : state === 'free' ? ['good', `\u201c${slug}\u201d is free.`] as const
+    : state === 'taken' ? ['bad', `\u201c${slug}\u201d is taken. Try another \u2014 it stands in the link, so it has to be its own.`] as const
+    : state === 'unknown' ? ['faint', 'Could not check that just now; you can still try.'] as const
+    : ['faint', ''] as const;
+
+  if (!said) return null;
+
+  return (
+    <p className={`slug-status ${tone}`} aria-live="polite">
+      {state === 'checking' && shape === null
+        ? <span className="slug-spinner" aria-hidden="true" /> : null}
+      {said}
+    </p>
+  );
+}
+
 function NewOrganization({ onDone, onRefused, count, cap, first = false }: {
   onDone: () => void; onRefused: (cap: number) => void;
   count: number; cap: number | null; first?: boolean;
@@ -501,6 +555,9 @@ function NewOrganization({ onDone, onRefused, count, cap, first = false }: {
   // on an untouched first-run screen reads as the link they are being given.
   // Nothing is derived until there is a name to derive it from.
   const derived = name.trim() ? slugify(name, 'organization') : '';
+  const wanted = slug || derived;
+  const shape = slugProblem(wanted);
+  const availability = useSlugAvailability(shape ? '' : wanted);
 
   const create = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -572,11 +629,19 @@ function NewOrganization({ onDone, onRefused, count, cap, first = false }: {
         <Field label="Short name for links" help="Lower case letters, digits and dashes.">
           <input className="mono" name="org_slug"
                  placeholder="demo-society"
-                 value={slug || derived}
+                 value={wanted}
                  onChange={(e) => setSlug(slugify(e.target.value, 'organization'))} />
         </Field>
+
+        {/* Said under the field as it is typed rather than after the form is
+            sent: the short name stands in the link, and finding out it was
+            taken by submitting means re-reading a form you thought was done. */}
+        <SlugStatus slug={wanted} shape={shape} state={availability} />
+
         <div className="create-actions">
-          <button type="submit" className="primary" disabled={busy || !name.trim() || full}>
+          <button type="submit" className="primary"
+                  disabled={busy || !name.trim() || full || shape !== null
+                            || availability === 'taken' || availability === 'checking'}>
             {busy ? 'Creating…' : 'Create organization'}
           </button>
           {!first ? (

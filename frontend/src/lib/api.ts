@@ -247,6 +247,21 @@ export async function myOrganizations(): Promise<Organization[]> {
   return unwrap(data, error);
 }
 
+/**
+ * Whether an organization's short name is still free.
+ *
+ * Through a function because organizations are owner-only: a client querying
+ * the table sees its own and nothing else, so the one slug that matters --
+ * somebody else's -- is invisible until the insert fails on it.
+ */
+export async function organizationSlugAvailable(slug: string): Promise<boolean> {
+  const { data, error } = await supabase.rpc('organization_slug_available', {
+    p_slug: slug,
+  });
+  if (error) throw new ApiError(error.message);
+  return data === true;
+}
+
 export async function createOrganization(
   input: { slug: string; name: string; description: string; contact: string },
 ): Promise<Organization> {
@@ -256,7 +271,33 @@ export async function createOrganization(
     .from('organizations')
     .insert({ ...input, owner_id: user.user.id })
     .select().single();
+  if (error) throw new ApiError(readConstraint(error, input.slug));
   return unwrap(data, error);
+}
+
+/**
+ * A constraint violation, said the way a person would say it.
+ *
+ * Postgres reports these by the name of the index that stopped it --
+ * `duplicate key value violates unique constraint "organizations_slug_key"` --
+ * which names the mechanism and not the problem. The quota triggers already
+ * raise sentences meant to be read, so those are passed through untouched.
+ */
+function readConstraint(
+  error: { code?: string; message: string }, slug: string,
+): string {
+  if (error.code === '23505' && /slug/.test(error.message)) {
+    return `The short name ${slug ? `\u201c${slug}\u201d ` : ''}is already taken. `
+      + 'Every organization needs its own, because it stands in the link.';
+  }
+  if (error.code === '23514' && /slug/.test(error.message)) {
+    return 'That short name will not do: three to fifty characters, lower-case '
+      + 'letters, digits and dashes, not starting or ending on a dash.';
+  }
+  if (error.code === '23514' && /name/.test(error.message)) {
+    return 'That name will not do: one to a hundred and twenty characters.';
+  }
+  return error.message;
 }
 
 export async function updateOrganization(id: string, patch: Partial<Organization>): Promise<void> {
