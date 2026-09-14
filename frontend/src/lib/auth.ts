@@ -67,6 +67,7 @@ export function oauthError(): string {
   return failedReturn;
 }
 
+
 export function useSession(): { session: Session | null; ready: boolean } {
   const [session, setSession] = useState<Session | null>(null);
   const [ready, setReady] = useState(false);

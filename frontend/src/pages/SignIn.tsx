@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import {
-  oauthError, passkeysPossible, requestPasswordReset, signIn, signInWithGoogle,
-  signInWithPasskey, signUp,
+  oauthError, passkeysPossible, requestPasswordReset, signIn,
+  signInWithGoogle, signInWithPasskey, signUp,
 } from '../lib/auth';
+import { explainAuthError } from '../lib/authError';
 import { navigate } from '../lib/router';
 import { Banner, Card, Field } from '../components/ui';
 
@@ -24,7 +25,10 @@ export function SignIn() {
   const [password, setPassword] = useState('');
   // a Google sign-in that never got as far as a session left its reason in the
   // address bar, and the page it came back to is this one.
-  const [error, setError] = useState(oauthError());
+  // What the provider said on the way back, if it refused. Kept raw so the
+  // banner below can show both the plain sentence and the server's own words.
+  const [returned] = useState(oauthError());
+  const [error, setError] = useState(returned);
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -85,7 +89,20 @@ export function SignIn() {
           You need an account to set up a ballot. Voters never do — they only need a PIN.
         </p>
 
-        {error ? <Banner kind="error">{error}</Banner> : null}
+        {error ? (
+          <Banner kind="error">
+            {explainAuthError(error)}
+            {explainAuthError(error) !== error ? (
+              <>
+                {' '}
+                <span className="faint">The server said: {error}</span>{' '}
+                <button className="ghost small" onClick={() => void google()}>
+                  Try Google again
+                </button>
+              </>
+            ) : null}
+          </Banner>
+        ) : null}
         {notice ? <Banner kind="good">{notice}</Banner> : null}
 
         <form onSubmit={submit} style={{ marginTop: 18 }}>

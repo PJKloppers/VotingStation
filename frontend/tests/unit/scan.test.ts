@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { pinFromScan, readDestination, routeFor } from '../../src/lib/scan';
+import { explainAuthError } from '../../src/lib/authError';
 
 const SITE = 'https://pjkloppers.github.io/VotingStation/';
 
@@ -137,5 +138,35 @@ describe('the PIN a scanned code carries', () => {
     expect(pinFromScan('12')).toBeNull();                 // too short
     expect(pinFromScan('1234567890123')).toBeNull();      // too long
     expect(pinFromScan('09a772')).toBeNull();
+  });
+});
+
+describe('what a failed sign-in is told to the organizer', () => {
+  /*
+   * The clock one is the reason this exists. "JWT issued at future" is true and
+   * useless: a token carries the moment it was issued, whoever checks it
+   * compares that against their own clock, and if the checker is behind then a
+   * token minted a second ago reads as one from the future. On a Google sign-in
+   * three clocks are involved and the message names none of them.
+   */
+  test('a clock-skew refusal is explained, not quoted', () => {
+    for (const raw of ['JWT issued at future', 'jwt issued in the future',
+                       'Token clock skew detected']) {
+      const said = explainAuthError(raw);
+      expect(said).not.toBe(raw);
+      expect(said.toLowerCase()).toContain('clock');
+      expect(said.toLowerCase()).toContain('try again');
+    }
+  });
+
+  test('a refused redirect says which end is wrong', () => {
+    const said = explainAuthError('redirect_to is not allowed');
+    expect(said.toLowerCase()).toContain('allow-list');
+  });
+
+  test('anything else is passed through as the server said it', () => {
+    expect(explainAuthError('Email link is invalid or has expired'))
+      .toBe('Email link is invalid or has expired');
+    expect(explainAuthError('')).toBe('');
   });
 });
