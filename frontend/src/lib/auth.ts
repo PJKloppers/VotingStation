@@ -227,3 +227,30 @@ export async function signInWithPasskey(): Promise<void> {
   const { error } = await supabase.auth.signInWithPasskey();
   if (error) throw new Error(error.message);
 }
+
+/**
+ * Changes the password, having first proved the old one.
+ *
+ * `updateUser` does not ask for the current password -- a live session is
+ * enough for it. That is too little for a control sitting on a page somebody
+ * may have walked away from: a borrowed session should not be able to lock the
+ * owner out of their own account. So the old password is checked first, by
+ * signing in with it.
+ *
+ * Signing in again is safe on failure: a refused password leaves the session
+ * that is already here untouched, so a mistyped old password costs nothing but
+ * the message.
+ */
+export async function changePassword(current: string, next: string): Promise<void> {
+  const { data } = await supabase.auth.getUser();
+  const email = data.user?.email;
+  if (!email) throw new Error('This account has no email address to check against.');
+
+  const { error: wrong } = await supabase.auth.signInWithPassword({
+    email, password: current,
+  });
+  if (wrong) throw new Error('That is not your current password.');
+
+  const { error } = await supabase.auth.updateUser({ password: next });
+  if (error) throw new Error(error.message);
+}

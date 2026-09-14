@@ -11,18 +11,21 @@ import { useCallback, useEffect, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import * as api from '../lib/api';
 import {
-  addPasskey, listPasskeys, passkeysPossible, removePasskey, renamePasskey, signOut,
-  type Passkey,
+  addPasskey, changePassword, listPasskeys, passkeysPossible, removePasskey,
+  renamePasskey, signOut, type Passkey,
 } from '../lib/auth';
+import { hasPassword, readableProviders } from '../lib/identities';
 import { navigate } from '../lib/router';
 import type { Organization } from '../lib/types';
-import { Banner, Card, Spinner } from '../components/ui';
+import { Banner, Card, Field, Spinner } from '../components/ui';
 
 export function Account({ session }: { session: Session }) {
   const email = session.user.email ?? '—';
-  // Google gives an account no password of its own; saying which way in was
-  // used saves an organizer wondering why there is nothing to change here.
-  const google = session.user.app_metadata?.provider === 'google';
+  // An account made with Google has no password, so there is nothing to change
+  // and the form would fail on the old one every time. Which way in was used
+  // is said instead, so the absence reads as an answer rather than a gap.
+  const password = hasPassword(session.user);
+  const others = readableProviders(session.user);
 
   return (
     <main className="narrow">
@@ -33,10 +36,16 @@ export function Account({ session }: { session: Session }) {
               concerned, so a long one runs straight off the side rather than
               wrapping. It is told it may break anywhere. */}
           <h1 className="account-email">{email}</h1>
-          {/* Only worth saying when it explains something: a Google account has
-              no password of its own to change here. */}
-          {google ? <p className="faint">Signed in with Google.</p> : null}
+          {/* Only worth saying when it explains something. */}
+          {others ? (
+            <p className="faint">
+              Signed in with {others}
+              {password ? ', and with a password.' : '.'}
+            </p>
+          ) : null}
         </div>
+
+        {password ? <ChangePassword /> : <NoPassword providers={others} />}
 
         <Passkeys />
 
@@ -51,6 +60,122 @@ export function Account({ session }: { session: Session }) {
         <DeleteAccount email={email} />
       </div>
     </main>
+  );
+}
+
+
+/**
+ * Changing the password.
+ *
+ * The old one is asked for, though the API does not require it. A live session
+ * is enough for Supabase, which is too little for a control sitting on a page
+ * somebody may have walked away from: a borrowed session should not be able to
+ * lock the owner out of their own account.
+ *
+ * Shown only when there is a password to change -- see `hasPassword`.
+ */
+function ChangePassword() {
+  const [open, setOpen] = useState(false);
+  const [current, setCurrent] = useState('');
+  const [next, setNext] = useState('');
+  const [again, setAgain] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [done, setDone] = useState(false);
+
+  const MIN = 6;
+  const short = next.length > 0 && next.length < MIN;
+  const mismatch = again.length > 0 && again !== next;
+  const same = next.length > 0 && next === current;
+  const ready = current.length > 0 && next.length >= MIN && again === next && !same;
+
+  const shut = () => {
+    setOpen(false);
+    setCurrent(''); setNext(''); setAgain(''); setError('');
+  };
+
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true); setError('');
+    try {
+      await changePassword(current, next);
+      shut();
+      setDone(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not change it.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card>
+      <h3>Password</h3>
+
+      {done && !open ? <Banner kind="good">Your password has been changed.</Banner> : null}
+
+      {!open ? (
+        <>
+          <p className="faint">
+            Changing it here signs nobody out — this device stays signed in, and so
+            does every other one.
+          </p>
+          <button className="ghost" onClick={() => { setOpen(true); setDone(false); }}>
+            Change my password
+          </button>
+        </>
+      ) : (
+        <form onSubmit={save}>
+          {error ? <Banner kind="error">{error}</Banner> : null}
+
+          <Field label="Current password">
+            <input type="password" name="current_password" autoFocus
+                   autoComplete="current-password"
+                   value={current} onChange={(e) => setCurrent(e.target.value)} />
+          </Field>
+
+          <Field label="New password" help={`At least ${MIN} characters.`}>
+            <input type="password" name="next_password" autoComplete="new-password"
+                   value={next} onChange={(e) => setNext(e.target.value)} />
+          </Field>
+          {short ? <p className="faint">A few more characters.</p> : null}
+          {same ? <p className="faint">That is the password you already have.</p> : null}
+
+          <Field label="Again">
+            <input type="password" name="next_password_again" autoComplete="new-password"
+                   value={again} onChange={(e) => setAgain(e.target.value)} />
+          </Field>
+          {mismatch ? <p className="faint">Those two do not match yet.</p> : null}
+
+          <div className="row">
+            <button type="submit" className="primary" disabled={busy || !ready}>
+              {busy ? 'Changing…' : 'Change it'}
+            </button>
+            <button type="button" className="ghost" onClick={shut}>Cancel</button>
+          </div>
+        </form>
+      )}
+    </Card>
+  );
+}
+
+/**
+ * What stands in place of the password card when there is no password.
+ *
+ * Said rather than left out: an organizer looking for the setting should find
+ * out why it is not there, instead of hunting a page that appears to be
+ * missing something.
+ */
+function NoPassword({ providers }: { providers: string }) {
+  return (
+    <Card>
+      <h3>Password</h3>
+      <p className="faint">
+        This account has no password — it is signed into with{' '}
+        {providers || 'another service'}, and that is where the credentials live.
+        You can add a passkey below for a second way in.
+      </p>
+    </Card>
   );
 }
 

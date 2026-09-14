@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { pinFromScan, readDestination, routeFor } from '../../src/lib/scan';
 import { explainAuthError } from '../../src/lib/authError';
+import { hasPassword, readableProviders } from '../../src/lib/identities';
 
 const SITE = 'https://pjkloppers.github.io/VotingStation/';
 
@@ -168,5 +169,63 @@ describe('what a failed sign-in is told to the organizer', () => {
     expect(explainAuthError('Email link is invalid or has expired'))
       .toBe('Email link is invalid or has expired');
     expect(explainAuthError('')).toBe('');
+  });
+});
+
+describe('what an account can be signed into with', () => {
+  /*
+   * The point of this is one decision: whether to offer a password to change.
+   * An account made with Google has none, so the form would fail on the old
+   * password every time with nothing to tell the organizer why.
+   */
+  const google = { provider: 'google' };
+  const email = { provider: 'email' };
+
+  test('a password account has one', () => {
+    expect(hasPassword({ identities: [email] })).toBe(true);
+  });
+
+  test('a Google-only account does not', () => {
+    expect(hasPassword({ identities: [google] })).toBe(false);
+    expect(readableProviders({ identities: [google] })).toBe('Google');
+  });
+
+  test('linking Google does not take the password away', () => {
+    const both = { identities: [email, google] };
+    expect(hasPassword(both)).toBe(true);
+    expect(readableProviders(both)).toBe('Google');
+  });
+
+  test('several third parties read as a list', () => {
+    // capitalised by first letter only, so 'github' reads as 'Github' -- worth
+    // fixing the day a second provider is actually offered, and not before
+    expect(readableProviders({ identities: [google, { provider: 'github' }] }))
+      .toBe('Google and Github');
+    expect(readableProviders({
+      identities: [google, { provider: 'github' }, { provider: 'apple' }],
+    })).toBe('Google, Github and Apple');
+  });
+
+  test('an older session with no identities falls back to app_metadata', () => {
+    expect(hasPassword({ app_metadata: { providers: ['email'] } })).toBe(true);
+    expect(hasPassword({ app_metadata: { provider: 'google' } })).toBe(false);
+    expect(readableProviders({ app_metadata: { provider: 'google' } })).toBe('Google');
+  });
+
+  test('identities win over app_metadata when both are there', () => {
+    // app_metadata names only the provider last used; identities is the list
+    expect(hasPassword({
+      identities: [email, google],
+      app_metadata: { provider: 'google' },
+    })).toBe(true);
+  });
+
+  test('knowing nothing is not knowing there is a password', () => {
+    expect(hasPassword({})).toBe(false);
+    expect(readableProviders({})).toBe('');
+  });
+
+  test('the same provider twice is counted once', () => {
+    expect(readableProviders({ identities: [google, google] })).toBe('Google');
   });
 });

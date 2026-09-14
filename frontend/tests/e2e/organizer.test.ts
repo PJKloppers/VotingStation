@@ -1311,3 +1311,46 @@ test('a link that returns with a code lands where the link meant, not on the fro
 
   await page.close();
 }, 90000);
+
+test('the account page offers to change a password, because this account has one', async () => {
+  /*
+   * The other half of this -- an account with only Google on it, which should
+   * be told there is no password rather than offered a form that cannot work
+   * -- is not reachable from here: the suite signs in with a password, and that
+   * is the account it has. The decision itself is unit-tested against both
+   * shapes; what this checks is that the page asks the question at all and
+   * makes the old password compulsory.
+   */
+  const page = await signedInPage();
+  await page.goto(`${origin}/#/account`, { waitUntil: 'networkidle0' });
+  await waitForText(page, 'Password');
+
+  const text = await page.evaluate(() => document.body.innerText);
+  expect(text).toContain('Change my password');
+  expect(text).not.toContain('This account has no password');
+
+  await clickByText(page, 'button', 'Change my password');
+  await page.waitForSelector('input[name="current_password"]', { timeout: 15000 });
+
+  const disabled = () => page.$eval('form .primary', (b) => (b as HTMLButtonElement).disabled);
+  expect(await disabled()).toBe(true);
+
+  // the new one alone is not enough: the old one is what proves it is you
+  await page.type('input[name="next_password"]', 'a-perfectly-good-new-one');
+  await page.type('input[name="next_password_again"]', 'a-perfectly-good-new-one');
+  expect(await disabled()).toBe(true);
+
+  // and the two new ones have to agree
+  await page.type('input[name="current_password"]', 'whatever-the-old-one-is');
+  await page.$eval('input[name="next_password_again"]',
+    (el) => { (el as HTMLInputElement).value = ''; });
+  await page.type('input[name="next_password_again"]', 'not-the-same');
+  await waitForText(page, 'do not match');
+
+  // nothing was submitted by any of that
+  await clickByText(page, 'button', 'Cancel');
+  await page.waitForFunction(
+    () => !document.querySelector('input[name="current_password"]'), { timeout: 10000 });
+
+  await page.close();
+});
