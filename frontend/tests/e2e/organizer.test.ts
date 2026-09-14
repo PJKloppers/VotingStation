@@ -1236,7 +1236,15 @@ test('the new-organization form says whether the short name is free', async () =
 
   const status = () => page.$eval('.slug-status', (n) => (n as HTMLElement).innerText.trim())
     .catch(() => '');
-  const submitDisabled = () => page.$eval('.create-actions .primary',
+
+  /*
+   * Scoped to the organization's own form. The new-ballot flow is a dialog now,
+   * and a closed dialog still has its children in the document -- so a bare
+   * `.create-actions .primary` finds that form's Create button first, which is
+   * disabled for its own reasons and has nothing to do with this one.
+   */
+  const orgSubmit = 'form:has(input[name="org_name"]) .create-actions .primary';
+  const submitDisabled = () => page.$eval(orgSubmit,
     (b) => (b as HTMLButtonElement).disabled);
 
   // a name whose slug is one this account already holds
@@ -1245,9 +1253,9 @@ test('the new-organization form says whether the short name is free', async () =
   await page.type('input[name="org_name"]', mine!.slug.replace(/-/g, ' '));
 
   await page.waitForFunction(
-    () => /is taken/.test(document.querySelector('.slug-status')?.textContent ?? '')
-      && (document.querySelector('.create-actions .primary') as HTMLButtonElement)?.disabled,
-    { timeout: 20000 });
+    (sel: string) => /is taken/.test(document.querySelector('.slug-status')?.textContent ?? '')
+      && (document.querySelector(sel) as HTMLButtonElement)?.disabled,
+    { timeout: 20000 }, orgSubmit);
   expect(await submitDisabled()).toBe(true);
 
   // and one nobody has
@@ -1266,9 +1274,9 @@ test('the new-organization form says whether the short name is free', async () =
    * changes is a race -- and one this test lost before it was written this way.
    */
   await page.waitForFunction(
-    () => /is free/.test(document.querySelector('.slug-status')?.textContent ?? '')
-      && !(document.querySelector('.create-actions .primary') as HTMLButtonElement)?.disabled,
-    { timeout: 20000 });
+    (sel: string) => /is free/.test(document.querySelector('.slug-status')?.textContent ?? '')
+      && !(document.querySelector(sel) as HTMLButtonElement)?.disabled,
+    { timeout: 20000 }, orgSubmit);
   expect(await status()).toContain('is free');
   expect(await submitDisabled()).toBe(false);
 

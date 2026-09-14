@@ -1087,3 +1087,16 @@ button.share-copy[data-state="copied"]:hover {
 /* Inside the create panel the steps have the panel's own rule above them
    already, so the first one does not need a second. */
 .create-panel .step:first-of-type { padding-top: 0; }
+
+/* In a modal the actions are pinned to the bottom of the body rather than
+   sitting at the end of it. The flow grows as it is answered, so on a short
+   screen the button that finishes it would otherwise be below the fold of a
+   panel that looks complete. */
+.modal-body .create-actions {
+  position: sticky;
+  bottom: 0;
+  margin: 18px -20px -20px;
+  padding: 14px 20px;
+  background: var(--surface);
+  border-top: 1px solid var(--rule-soft);
+}

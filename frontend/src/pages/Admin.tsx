@@ -701,28 +701,31 @@ function NewBallot({ orgId, orgSlug, count, cap, onDone, onRefused }: {
     }
   };
 
-  if (!open) {
-    return (
+  const shut = () => { setOpen(false); setError(''); };
+
+  /*
+   * In a modal rather than in the card. Opening it inline pushed the
+   * organization's ballots apart and grew the page by the length of the form,
+   * so starting a ballot moved everything an organizer was looking at. A
+   * dialog leaves the list where it is and puts the flow on top of it.
+   */
+  return (
+    <>
       <div className="create-foot ruled">
         <button className="ghost small" disabled={full} onClick={() => setOpen(true)}>
           + New ballot
         </button>
         <Quota used={count} cap={cap} noun="ballot" />
       </div>
-    );
-  }
 
-  return (
-    <form className="create-panel" onSubmit={create}>
-      <div className="create-head">
-        <h3>New ballot</h3>
-        <p className="create-note">
-          It starts as a draft. You add the questions next, and nobody can vote until
-          you publish it.
-        </p>
-      </div>
+      <Modal open={open} title="New ballot" onClose={shut}>
+        <form onSubmit={create}>
+          <p className="create-note">
+            It starts as a draft. You add the questions next, and nobody can vote until
+            you publish it.
+          </p>
 
-      {error ? <Banner kind="error">{error}</Banner> : null}
+          {error ? <Banner kind="error">{error}</Banner> : null}
 
       <Step n={1} title="What is this ballot called?">
         <Field label="Ballot title">
@@ -780,15 +783,16 @@ function NewBallot({ orgId, orgSlug, count, cap, onDone, onRefused }: {
         </>
       ) : null}
 
-      <div className="create-actions">
-        <button type="submit" className="primary" disabled={busy || !typed || full}>
-          {busy ? 'Creating…' : 'Create ballot'}
-        </button>
-        <button type="button" className="ghost"
-                onClick={() => { setOpen(false); setError(''); }}>Cancel</button>
-        <Quota used={count} cap={cap} noun="ballot" />
-      </div>
-    </form>
+          <div className="create-actions">
+            <button type="submit" className="primary" disabled={busy || !typed || full}>
+              {busy ? 'Creating…' : 'Create ballot'}
+            </button>
+            <button type="button" className="ghost" onClick={shut}>Cancel</button>
+            <Quota used={count} cap={cap} noun="ballot" />
+          </div>
+        </form>
+      </Modal>
+    </>
   );
 }
 
