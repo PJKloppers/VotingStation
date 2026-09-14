@@ -27,9 +27,9 @@ export function Account({ session }: { session: Session }) {
         <div>
           <p className="eyebrow">Account</p>
           <h1>{email}</h1>
-          <p className="faint">
-            {google ? 'Signed in with Google.' : 'Signed in with an email address and password.'}
-          </p>
+          {/* Only worth saying when it explains something: a Google account has
+              no password of its own to change here. */}
+          {google ? <p className="faint">Signed in with Google.</p> : null}
         </div>
 
         <Card>

@@ -11,6 +11,7 @@ import { Home } from './pages/Home';
 import { Account } from './pages/Account';
 import { Organization } from './pages/Organization';
 import { Pools } from './pages/Pools';
+import { ResetPassword } from './pages/ResetPassword';
 import { Live } from './pages/Live';
 import { Manage } from './pages/Manage';
 import { PrivacyAndTerms } from './pages/PrivacyAndTerms';
@@ -51,6 +52,12 @@ function App() {
         return <PrivacyAndTerms />;
       case 'signin':
         return <SignIn />;
+      case 'reset-password':
+        // No session guard: arriving here without one is a real case -- a reset
+        // link is good once -- and the page says so better than a redirect to
+        // the sign-in form would.
+        if (!ready) return <main><Spinner label="Checking your session" /></main>;
+        return <ResetPassword session={session} />;
       case 'admin':
         if (!ready) return <main><Spinner label="Checking your session" /></main>;
         return session ? <Admin /> : <SignIn />;

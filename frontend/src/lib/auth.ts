@@ -31,6 +31,27 @@ const returned = new URLSearchParams(window.location.search);
 let awaitingOAuth = returned.has('code');
 const failedReturn = returned.get('error_description') ?? returned.get('error') ?? '';
 
+/**
+ * Whether the code being exchanged came out of a password-reset email.
+ *
+ * Carried in the query string rather than the fragment, and that is forced:
+ * the return URL has to be one the project's allow-list matches, PKCE appends
+ * its `?code=` to whatever that URL is, and a `#/reset-password` on the end
+ * would put the code *inside* the fragment where the library never looks for
+ * it. A query parameter sits beside the code instead of swallowing it.
+ *
+ * Read here, before anything can rewrite the address bar, and then taken out
+ * of it -- a reset link is a credential, and it has no business staying in the
+ * history of a shared machine.
+ */
+const recovering = returned.get('flow') === 'recovery';
+
+if (recovering) {
+  const url = new URL(window.location.href);
+  url.searchParams.delete('flow');
+  window.history.replaceState(window.history.state, '', url.toString());
+}
+
 if (failedReturn) {
   // strip it, and land on the page that can say what went wrong: a failed
   // return would otherwise drop the organizer on the voter's front page with
@@ -65,7 +86,11 @@ export function useSession(): { session: Session | null; ready: boolean } {
       // becomes a route -- the same place the password form goes.
       if (event === 'SIGNED_IN' && awaitingOAuth) {
         awaitingOAuth = false;
-        navigate('/admin');
+        // A reset link signs the organizer in and then wants a password, which
+        // is not the dashboard. PASSWORD_RECOVERY is not raised on the PKCE
+        // path -- the exchange reports itself as an ordinary sign-in -- so the
+        // flow is told apart by what the link asked for, not by the event.
+        navigate(recovering ? '/reset-password' : '/admin');
       }
     });
     return () => { live = false; sub.subscription.unsubscribe(); };
@@ -96,4 +121,28 @@ export async function signUp(email: string, password: string): Promise<{ needsCo
 
 export async function signOut(): Promise<void> {
   await supabase.auth.signOut();
+}
+
+/**
+ * Sends the password-reset letter.
+ *
+ * `flow=recovery` rides along so the app knows, when the browser comes back,
+ * that the organizer is here to choose a password rather than to be dropped on
+ * their dashboard.
+ *
+ * It resolves the same whether or not the address has an account. Telling a
+ * stranger which addresses are registered is the one thing this form could
+ * leak, so it does not: the page says the same sentence either way.
+ */
+export async function requestPasswordReset(email: string): Promise<void> {
+  const { error } = await supabase.auth.resetPasswordForEmail(email, {
+    redirectTo: `${appBase()}?flow=recovery`,
+  });
+  if (error) throw new Error(error.message);
+}
+
+/** Sets a new password on the session the reset link created. */
+export async function setPassword(password: string): Promise<void> {
+  const { error } = await supabase.auth.updateUser({ password });
+  if (error) throw new Error(error.message);
 }

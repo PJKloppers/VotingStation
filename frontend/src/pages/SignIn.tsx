@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { oauthError, signIn, signInWithGoogle, signUp } from '../lib/auth';
+import { oauthError, requestPasswordReset, signIn, signInWithGoogle, signUp } from '../lib/auth';
 import { navigate } from '../lib/router';
 import { Banner, Card, Field } from '../components/ui';
 
@@ -93,7 +93,76 @@ export function SignIn() {
                 onClick={() => { setMode(mode === 'in' ? 'up' : 'in'); setError(''); }}>
           {mode === 'in' ? 'I need an account' : 'I already have an account'}
         </button>
+
+        {mode === 'in' ? <Forgot email={email} /> : null}
       </Card>
     </main>
+  );
+}
+
+/**
+ * Asking for a reset letter.
+ *
+ * It says the same thing whether or not the address has an account. Answering
+ * differently would make this form a way of finding out who is registered, and
+ * an organizer who mistyped their own address is helped by "check the address"
+ * as much as by anything else it could say.
+ *
+ * Takes whatever is already in the email box above, because by the time someone
+ * reaches for this they have usually typed it once.
+ */
+function Forgot({ email }: { email: string }) {
+  const [asking, setAsking] = useState(false);
+  const [address, setAddress] = useState(email);
+  const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState('');
+
+  if (sent) {
+    return (
+      <Banner kind="good">
+        If <span className="mono">{address}</span> has an account, a reset link is
+        on its way. It works once, and not for long.
+      </Banner>
+    );
+  }
+
+  if (!asking) {
+    return (
+      <button className="ghost block small" style={{ marginTop: 6 }}
+              onClick={() => { setAsking(true); setAddress(email); }}>
+        I have forgotten my password
+      </button>
+    );
+  }
+
+  const send = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true); setError('');
+    try {
+      await requestPasswordReset(address.trim());
+      setSent(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not send that.');
+      setBusy(false);
+    }
+  };
+
+  return (
+    <form onSubmit={send} style={{ marginTop: 14 }}>
+      {error ? <Banner kind="error">{error}</Banner> : null}
+      <Field label="Where to send the link">
+        <input type="email" required name="reset_email" autoComplete="email"
+               value={address} onChange={(e) => setAddress(e.target.value)} />
+      </Field>
+      <div className="row">
+        <button type="submit" className="primary" disabled={busy || !address.trim()}>
+          {busy ? 'Sending…' : 'Send me a reset link'}
+        </button>
+        <button type="button" className="ghost" onClick={() => setAsking(false)}>
+          Cancel
+        </button>
+      </div>
+    </form>
   );
 }

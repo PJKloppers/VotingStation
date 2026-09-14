@@ -1117,3 +1117,46 @@ test('option pools: made on the page, and copied onto a question from the editor
     await page.close();
   }
 }, 90000);
+
+test('the reset-password page: asking for a link, and arriving without one', async () => {
+  /*
+   * The letter itself is not sent from here. The project is on Supabase's own
+   * SMTP, which rate-limits to a handful an hour, and a suite that burns them
+   * would take the real reset flow down with it. What is checked is the two
+   * states a person actually meets: the form that asks, and the page at the end
+   * of a link that has already been spent.
+   */
+  const page = await browser.newPage();
+  await page.setViewport({ width: 420, height: 900 });
+
+  /*
+   * Signed out, deliberately and by hand. The session lives in localStorage,
+   * which every page of one browser shares, so a test that has signed in
+   * earlier leaves this one signed in too -- which is how this first passed on
+   * its own and failed in the suite.
+   */
+  await page.goto(`${origin}/#/`, { waitUntil: 'networkidle0' });
+  await page.evaluate(() => { window.localStorage.clear(); });
+
+  // a spent link, or a bookmarked one: a session is what the code bought, and
+  // without it there is nothing to set a password on
+  await page.goto(`${origin}/#/reset-password`, { waitUntil: 'networkidle0' });
+  await page.reload({ waitUntil: 'networkidle0' });
+  await waitForText(page, 'That link has already been used');
+  expect(await page.$('input[name="new_password"]')).toBeNull();
+
+  // and the way to ask for a fresh one
+  await page.goto(`${origin}/#/signin`, { waitUntil: 'networkidle0' });
+  await waitForText(page, 'I have forgotten my password');
+  expect(await page.$('input[name="reset_email"]')).toBeNull();
+
+  await page.type('input[name="email"]', 'someone@example.org');
+  await clickByText(page, 'button', 'I have forgotten my password');
+
+  // it carries across whatever was already typed, rather than asking twice
+  const carried = await page.$eval('input[name="reset_email"]',
+    (el) => (el as HTMLInputElement).value);
+  expect(carried).toBe('someone@example.org');
+
+  await page.close();
+});
