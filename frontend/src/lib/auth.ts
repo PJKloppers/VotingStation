@@ -28,7 +28,12 @@ export function oauthReturnUrl(): string {
  * page by hand.
  */
 const returned = new URLSearchParams(window.location.search);
-let awaitingOAuth = returned.has('code');
+/**
+ * A code in the query means this page load is a return: from Google, or from a
+ * link in an email. Somewhere a session is about to exist, and when it does
+ * this load owes the organizer a route.
+ */
+let owedRoute = returned.has('code');
 const failedReturn = returned.get('error_description') ?? returned.get('error') ?? '';
 
 /**
@@ -68,6 +73,32 @@ export function oauthError(): string {
 }
 
 
+/**
+ * Sends a returning organizer where the link they followed meant them to go.
+ *
+ * Driven by the session existing, not by which event announced it, and that is
+ * the whole point of it. It used to wait for `SIGNED_IN`, which is one of
+ * several ways a session can turn up: the code is exchanged while the page is
+ * still booting, so if that finishes before React has subscribed the event is
+ * simply gone, and a later subscriber is greeted with `INITIAL_SESSION`
+ * instead. The organizer then landed on the front page, signed in, with no
+ * sign of the page they had asked for -- which is exactly what a reset link
+ * did.
+ *
+ * A reset link wants the password form rather than the dashboard, and it is
+ * told apart by what the link asked for rather than by the event, because
+ * PASSWORD_RECOVERY is not raised on the PKCE path -- the exchange reports
+ * itself as an ordinary sign-in.
+ *
+ * Runs once: `owedRoute` is cleared before navigating, so a session refreshing
+ * an hour later does not move anybody off the page they are reading.
+ */
+function settleReturn(session: Session | null): void {
+  if (!session || !owedRoute) return;
+  owedRoute = false;
+  navigate(recovering ? '/reset-password' : '/admin');
+}
+
 export function useSession(): { session: Session | null; ready: boolean } {
   const [session, setSession] = useState<Session | null>(null);
   const [ready, setReady] = useState(false);
@@ -78,21 +109,12 @@ export function useSession(): { session: Session | null; ready: boolean } {
       if (!live) return;
       setSession(data.session);
       setReady(true);
+      settleReturn(data.session);
     });
-    const { data: sub } = supabase.auth.onAuthStateChange((event, next) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, next) => {
       setSession(next);
       setReady(true);
-      // a Google sign-in returns to the bare page, because the redirect URL
-      // has to be one fixed string on the allow-list. This is where it
-      // becomes a route -- the same place the password form goes.
-      if (event === 'SIGNED_IN' && awaitingOAuth) {
-        awaitingOAuth = false;
-        // A reset link signs the organizer in and then wants a password, which
-        // is not the dashboard. PASSWORD_RECOVERY is not raised on the PKCE
-        // path -- the exchange reports itself as an ordinary sign-in -- so the
-        // flow is told apart by what the link asked for, not by the event.
-        navigate(recovering ? '/reset-password' : '/admin');
-      }
+      settleReturn(next);
     });
     return () => { live = false; sub.subscription.unsubscribe(); };
   }, []);

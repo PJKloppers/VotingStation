@@ -1274,3 +1274,40 @@ test('the new-organization form says whether the short name is free', async () =
 
   await page.close();
 });
+
+test('a link that returns with a code lands where the link meant, not on the front page', async () => {
+  /*
+   * This is the bug a reset link had. The navigation used to wait for a
+   * SIGNED_IN event, which is only one of the ways a session turns up: the code
+   * is exchanged while the page is still booting, and if that finishes before
+   * React has subscribed the event is gone -- a later subscriber is greeted
+   * with INITIAL_SESSION instead. The organizer landed on the front page,
+   * signed in, with no sign of the page they asked for. Google returns were
+   * going the same way, to the front page rather than the dashboard.
+   *
+   * The codes here are not real. They do not need to be: what is under test is
+   * where the app sends somebody once a session exists, and a session already
+   * does. That is the same state the race produced.
+   */
+  const page = await signedInPage();
+  const landsOn = async (url: string) => {
+    await page.goto(url, { waitUntil: 'networkidle0' });
+    await page.waitForFunction(
+      () => document.readyState === 'complete', { timeout: 15000 });
+    // give the session a moment to be read and acted on
+    await page.waitForFunction(
+      () => !document.body.innerText.includes('Checking your session'),
+      { timeout: 15000 }).catch(() => {});
+    await new Promise((r) => setTimeout(r, 1200));
+    return page.evaluate(() => window.location.hash);
+  };
+
+  expect(await landsOn(`${origin}/?flow=recovery&code=returned`)).toBe('#/reset-password');
+  expect(await landsOn(`${origin}/?code=returned`)).toBe('#/admin');
+
+  // and a page load that is not a return is left exactly where it was asked for
+  expect(await landsOn(`${origin}/`)).toBe('');
+  expect(await landsOn(`${origin}/#/pools`)).toBe('#/pools');
+
+  await page.close();
+}, 90000);
