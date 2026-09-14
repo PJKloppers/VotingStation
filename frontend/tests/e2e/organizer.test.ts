@@ -1347,6 +1347,19 @@ test('the account page offers to change a password, because this account has one
   await page.type('input[name="next_password_again"]', 'not-the-same');
   await waitForText(page, 'do not match');
 
+  // the way out, for somebody who cannot fill the box they are looking at
+  expect(text).toContain('I have forgotten my current password');
+  const forgotten = await page.evaluate(() => {
+    const card = [...document.querySelectorAll('.card')]
+      .find((c) => (c as HTMLElement).innerText.startsWith('Password'));
+    const b = [...(card?.querySelectorAll('button') ?? [])]
+      .find((x) => (x as HTMLElement).innerText.includes('forgotten my current'));
+    return !!b;
+  });
+  expect(forgotten).toBe(true);
+  // not pressed: it sends a real letter, and the project's SMTP allows a
+  // handful an hour -- burning them here would break the real reset flow
+
   // nothing was submitted by any of that
   await clickByText(page, 'button', 'Cancel');
   await page.waitForFunction(

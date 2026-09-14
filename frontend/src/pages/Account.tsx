@@ -12,7 +12,7 @@ import type { Session } from '@supabase/supabase-js';
 import * as api from '../lib/api';
 import {
   addPasskey, changePassword, listPasskeys, passkeysPossible, removePasskey,
-  renamePasskey, signOut, type Passkey,
+  requestPasswordReset, renamePasskey, signOut, type Passkey,
 } from '../lib/auth';
 import { hasPassword, readableProviders } from '../lib/identities';
 import { navigate } from '../lib/router';
@@ -45,7 +45,7 @@ export function Account({ session }: { session: Session }) {
           ) : null}
         </div>
 
-        {password ? <ChangePassword /> : <NoPassword providers={others} />}
+        {password ? <ChangePassword email={email} /> : <NoPassword providers={others} />}
 
         <Passkeys />
 
@@ -74,7 +74,7 @@ export function Account({ session }: { session: Session }) {
  *
  * Shown only when there is a password to change -- see `hasPassword`.
  */
-function ChangePassword() {
+function ChangePassword({ email }: { email: string }) {
   const [open, setOpen] = useState(false);
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
@@ -155,7 +155,56 @@ function ChangePassword() {
           </div>
         </form>
       )}
+
+      {/* Under the form as well as beside the button, because the moment a
+          person discovers they cannot remember the old one is the moment they
+          are looking at the box asking for it. */}
+      <ForgotHere email={email} />
     </Card>
+  );
+}
+
+/**
+ * The way out of the current-password box, for somebody who cannot fill it.
+ *
+ * They are signed in, so there is nothing to ask: the address is known and the
+ * letter goes to it. The link it carries signs them in again and lands on the
+ * page that sets a password without asking for the old one, which is the whole
+ * point of following it.
+ */
+function ForgotHere({ email }: { email: string }) {
+  const [state, setState] = useState<'idle' | 'sending' | 'sent'>('idle');
+  const [error, setError] = useState('');
+
+  if (state === 'sent') {
+    return (
+      <p className="faint" style={{ marginTop: 12 }}>
+        A reset link is on its way to <span className="mono">{email}</span>. It
+        works once, and sets a new password without asking for the old one.
+      </p>
+    );
+  }
+
+  const send = async () => {
+    setState('sending'); setError('');
+    try {
+      await requestPasswordReset(email);
+      setState('sent');
+    } catch (e) {
+      // Nearly always the sending limit rather than anything about the account.
+      setError(e instanceof Error ? e.message : 'Could not send that just now.');
+      setState('idle');
+    }
+  };
+
+  return (
+    <>
+      {error ? <Banner kind="error">{error}</Banner> : null}
+      <button className="ghost small" style={{ marginTop: 12 }}
+              disabled={state === 'sending'} onClick={() => void send()}>
+        {state === 'sending' ? 'Sending…' : 'I have forgotten my current password'}
+      </button>
+    </>
   );
 }
 
