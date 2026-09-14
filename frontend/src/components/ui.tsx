@@ -97,3 +97,22 @@ export function Rail({ value }: { value: number }) {
   const pct = Math.max(0, Math.min(1, value)) * 100;
   return <div className="progress-rail"><i style={{ width: `${pct}%` }} /></div>;
 }
+
+/**
+ * One numbered step of a form that asks for things in order.
+ *
+ * Used where asking for everything at once would mean asking for things that
+ * make no sense yet -- adding a question, starting a ballot. The steps stay on
+ * screen once passed, so going back to change an earlier answer is scrolling
+ * up rather than starting again.
+ */
+export function Step({ n, title, children }: {
+  n: number; title: string; children: React.ReactNode;
+}) {
+  return (
+    <section className="step">
+      <p className="step-head"><span className="step-n">{n}</span>{title}</p>
+      {children}
+    </section>
+  );
+}

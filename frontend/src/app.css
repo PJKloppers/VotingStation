@@ -1077,3 +1077,13 @@ button.share-copy[data-state="copied"]:hover {
 .vote-rules { align-items: flex-start; gap: 14px; }
 .vote-rules .field { margin-bottom: 0; flex: 1 1 130px; }
 .vote-rules input { max-width: 120px; }
+
+/* Two choices rather than three, so they take half the row each. */
+.kind-choice.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 560px) {
+  .kind-choice.two { grid-template-columns: 1fr; }
+}
+
+/* Inside the create panel the steps have the panel's own rule above them
+   already, so the first one does not need a second. */
+.create-panel .step:first-of-type { padding-top: 0; }

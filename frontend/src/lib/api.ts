@@ -433,7 +433,13 @@ export async function ballotsForOrg(orgId: string): Promise<Ballot[]> {
 }
 
 export async function createBallot(
-  input: { org_id: string; slug: string; title: string; description: string },
+  input: {
+    org_id: string; slug: string; title: string; description: string;
+    /** Settled at creation rather than left to the Settings tab to discover. */
+    mode?: Ballot['mode'];
+    anonymous?: boolean;
+    results_public?: boolean;
+  },
 ): Promise<Ballot> {
   const { data, error } = await supabase
     .from('ballots').insert(input).select(BALLOT_COLUMNS).single();

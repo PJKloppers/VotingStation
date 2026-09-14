@@ -1466,3 +1466,50 @@ test('a question is added complete in one pass, options and seats and all', asyn
     await page.close();
   }
 }, 90000);
+
+test('a new ballot is created with how it runs already decided', async () => {
+  /*
+   * Mode and anonymity used to be defaults an organizer met later on the
+   * Settings tab, which is a poor place to meet them: anonymity in particular
+   * the database refuses to change once a vote exists, because switching would
+   * strand every key already recorded. Asked at the start, they are a choice;
+   * found afterwards, they are a fact.
+   */
+  const page = await signedInPage();
+  let made = '';
+  try {
+    await page.goto(`${origin}/#/admin`, { waitUntil: 'networkidle0' });
+    await waitForText(page, 'Claude Society');
+    await clickWithin(page, '.card', 'Claude Society', 'button', 'New ballot');
+    await page.waitForSelector('input[name="ballot_title"]', { timeout: 15000 });
+
+    // step two does not exist until the ballot has a name
+    expect(await page.evaluate(
+      () => document.body.innerText.includes('How does the meeting run?'))).toBe(false);
+
+    const name = `Flow check ${Date.now().toString(36)}`;
+    await page.type('input[name="ballot_title"]', name);
+    await waitForText(page, 'How does the meeting run?');
+
+    // away from both defaults, so a pass cannot be the defaults passing
+    await clickByText(page, 'button', 'All at once');
+    await clickByText(page, 'label', 'Secret ballot');
+
+    await clickByText(page, 'button', 'Create ballot');
+    await page.waitForFunction(
+      () => window.location.hash.startsWith('#/manage/'), { timeout: 20000 });
+    made = ballotIdFromUrl(page);
+    expect(made).not.toBe('');
+
+    const { data } = await organizer.from('ballots')
+      .select('title, mode, anonymous, results_public, status').eq('id', made).single();
+    expect(data!.title).toBe(name);
+    expect(data!.mode).toBe('open');
+    expect(data!.anonymous).toBe(false);
+    expect(data!.results_public).toBe(true);   // left on, and stayed on
+    expect(data!.status).toBe('draft');
+  } finally {
+    if (made) await organizer.from('ballots').delete().eq('id', made);
+    await page.close();
+  }
+}, 90000);

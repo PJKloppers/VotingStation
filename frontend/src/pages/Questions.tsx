@@ -12,7 +12,7 @@ import type { AnyQuestion } from '../lib/api';
 import { parseOptionList } from '../lib/options';
 import type { OptionPool, QuestionOption, QuestionType } from '../lib/types';
 import { QUESTION_TYPE_NAMES } from '../lib/types';
-import { Banner, Card, Check, Empty, Field, Pill, Spinner } from '../components/ui';
+import { Banner, Card, Check, Empty, Field, Pill, Spinner, Step } from '../components/ui';
 
 export function Questions({ ballotId }: { ballotId: string }) {
   const [questions, setQuestions] = useState<AnyQuestion[] | null>(null);
@@ -334,18 +334,6 @@ function AddQuestion({ ballotId, after, onAdded }: {
         ) : null}
       </form>
     </Card>
-  );
-}
-
-/** One numbered step of the add-a-question flow. */
-function Step({ n, title, children }: {
-  n: number; title: string; children: React.ReactNode;
-}) {
-  return (
-    <section className="step">
-      <p className="step-head"><span className="step-n">{n}</span>{title}</p>
-      {children}
-    </section>
   );
 }
 

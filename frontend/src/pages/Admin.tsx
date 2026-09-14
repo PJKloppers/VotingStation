@@ -6,7 +6,7 @@ import { appBase, href, navigate } from '../lib/router';
 import type { Ballot, Organization, OrganizationImage } from '../lib/types';
 import { encodeQr, QUIET, qrPath, type QrCode } from '../lib/qr';
 import { slugify, slugProblem } from '../lib/slug';
-import { Banner, Card, Empty, Field, Modal, Pill, Spinner } from '../components/ui';
+import { Banner, Card, Check, Empty, Field, Modal, Pill, Spinner, Step } from '../components/ui';
 
 export function Admin() {
   const [orgs, setOrgs] = useState<Organization[] | null>(null);
@@ -668,6 +668,9 @@ function NewBallot({ orgId, orgSlug, count, cap, onDone, onRefused }: {
 }) {
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState('');
+  const [mode, setMode] = useState<Ballot['mode']>('gated');
+  const [anonymous, setAnonymous] = useState(true);
+  const [publish, setPublish] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -680,8 +683,10 @@ function NewBallot({ orgId, orgSlug, count, cap, onDone, onRefused }: {
     try {
       const ballot = await api.createBallot({
         org_id: orgId, title, slug: slugify(title), description: '',
+        mode, anonymous, results_public: publish,
       });
-      setTitle(''); setOpen(false);
+      setTitle(''); setMode('gated'); setAnonymous(true); setPublish(true);
+      setOpen(false);
       onDone();
       navigate(`/manage/${ballot.id}`);
     } catch (err) {
@@ -719,25 +724,61 @@ function NewBallot({ orgId, orgSlug, count, cap, onDone, onRefused }: {
 
       {error ? <Banner kind="error">{error}</Banner> : null}
 
-      <Field label="Ballot title">
-        <input required autoFocus value={title} name="ballot_title"
-               onChange={(e) => setTitle(e.target.value)}
-               placeholder="Annual General Meeting 2026" />
-      </Field>
+      <Step n={1} title="What is this ballot called?">
+        <Field label="Ballot title">
+          <input required autoFocus value={title} name="ballot_title"
+                 onChange={(e) => setTitle(e.target.value)}
+                 placeholder="Annual General Meeting 2026" />
+        </Field>
 
-      {/* the slug is derived and never asked for, so without this an organizer
-          finds out what address they made only after making it */}
-      <p className="slug-preview" aria-live="polite">
-        <span className="slug-label">Its link</span>
-        {typed ? (
-          <code className="slug-url">
-            <span className="site">/{orgSlug}</span>
-            <span className="leaf">/{slugify(title)}</span>
-          </code>
-        ) : (
-          <span className="slug-empty">appears here as you type</span>
-        )}
-      </p>
+        {/* the slug is derived and never asked for, so without this an organizer
+            finds out what address they made only after making it */}
+        <p className="slug-preview" aria-live="polite">
+          <span className="slug-label">Its link</span>
+          {typed ? (
+            <code className="slug-url">
+              <span className="site">/{orgSlug}</span>
+              <span className="leaf">/{slugify(title)}</span>
+            </code>
+          ) : (
+            <span className="slug-empty">appears here as you type</span>
+          )}
+        </p>
+      </Step>
+
+      {typed ? (
+        <>
+          <Step n={2} title="How does the meeting run?">
+            <div className="kind-choice two" role="radiogroup" aria-label="How the meeting runs">
+              {([
+                ['gated', 'One question at a time',
+                 'You open each question from the chair. Nobody can run ahead.'],
+                ['open', 'All at once',
+                 'The whole ballot is in front of every voter, to work through at their own pace.'],
+              ] as const).map(([value, name, blurb]) => (
+                <button key={value} type="button" role="radio"
+                        aria-checked={mode === value}
+                        className={`kind${mode === value ? ' picked' : ''}`}
+                        onClick={() => setMode(value)}>
+                  <span className="kind-title">{name}</span>
+                  <span className="kind-blurb">{blurb}</span>
+                </button>
+              ))}
+            </div>
+          </Step>
+
+          <Step n={3} title="Who sees what?">
+            {/* Both of these are hard to change later for good reasons: the
+                database refuses to switch anonymity once a vote exists, because
+                it would strand every key already recorded. Better asked now
+                than discovered on the Settings tab afterwards. */}
+            <Check label="Secret ballot" checked={anonymous} onChange={setAnonymous}
+                   help="Votes are recorded against a one-way pseudonym, not the PIN. This cannot be changed once anyone has voted." />
+            <Check label="Publish the results" checked={publish} onChange={setPublish}
+                   help="Anyone with the link sees each question's count once its gate closes. Off keeps them to you." />
+          </Step>
+        </>
+      ) : null}
 
       <div className="create-actions">
         <button type="submit" className="primary" disabled={busy || !typed || full}>
