@@ -1,5 +1,8 @@
 import { useState } from 'react';
-import { oauthError, requestPasswordReset, signIn, signInWithGoogle, signUp } from '../lib/auth';
+import {
+  oauthError, passkeysPossible, requestPasswordReset, signIn, signInWithGoogle,
+  signInWithPasskey, signUp,
+} from '../lib/auth';
 import { navigate } from '../lib/router';
 import { Banner, Card, Field } from '../components/ui';
 
@@ -40,6 +43,24 @@ export function SignIn() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not sign in.');
     } finally {
+      setBusy(false);
+    }
+  };
+
+  /*
+   * No address typed first. The browser offers whichever passkeys it holds for
+   * this site and the account comes back with the one chosen, which is the
+   * whole point -- a passkey identifies the account as well as proving it.
+   */
+  const passkey = async () => {
+    setBusy(true); setError(''); setNotice('');
+    try {
+      await signInWithPasskey();
+      navigate('/admin');
+    } catch (err) {
+      const said = err instanceof Error ? err.message : 'That did not work.';
+      // dismissing the browser's own prompt is not an error to report
+      setError(/notallowed|abort/i.test(said) ? '' : said);
       setBusy(false);
     }
   };
@@ -88,6 +109,15 @@ export function SignIn() {
           <GoogleMark />
           {mode === 'in' ? 'Sign in with Google' : 'Sign up with Google'}
         </button>
+
+        {/* Only for signing in: a passkey is made against an account that
+            already exists, on the account page. */}
+        {mode === 'in' && passkeysPossible() ? (
+          <button type="button" className="ghost block" style={{ marginTop: 10 }}
+                  disabled={busy} onClick={passkey}>
+            Use a passkey
+          </button>
+        ) : null}
 
         <button className="ghost block" style={{ marginTop: 10 }}
                 onClick={() => { setMode(mode === 'in' ? 'up' : 'in'); setError(''); }}>

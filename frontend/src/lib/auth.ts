@@ -146,3 +146,61 @@ export async function setPassword(password: string): Promise<void> {
   const { error } = await supabase.auth.updateUser({ password });
   if (error) throw new Error(error.message);
 }
+
+/* ------------------------------------------------------------- passkeys */
+
+/** One passkey on the account, as the server lists it. */
+export interface Passkey {
+  id: string;
+  friendly_name?: string;
+  created_at: string;
+  last_used_at?: string;
+}
+
+/**
+ * Whether this browser can make a passkey at all.
+ *
+ * Two things have to be true, and they fail differently. `PublicKeyCredential`
+ * missing means the browser has no WebAuthn -- nothing to offer. A page served
+ * without a secure context has the API but every call refuses, which would
+ * read to an organizer as the button being broken.
+ */
+export function passkeysPossible(): boolean {
+  return typeof window !== 'undefined'
+    && 'PublicKeyCredential' in window
+    && window.isSecureContext;
+}
+
+export async function listPasskeys(): Promise<Passkey[]> {
+  const { data, error } = await supabase.auth.passkey.list();
+  if (error) throw new Error(error.message);
+  return (data ?? []) as Passkey[];
+}
+
+/**
+ * Registers a passkey against the signed-in account.
+ *
+ * The library runs the whole ceremony: it asks the server for a challenge,
+ * hands it to the browser, and posts the credential back. What the organizer
+ * sees is their own device asking for a fingerprint or a PIN.
+ */
+export async function addPasskey(): Promise<void> {
+  const { error } = await supabase.auth.registerPasskey();
+  if (error) throw new Error(error.message);
+}
+
+export async function renamePasskey(id: string, name: string): Promise<void> {
+  const { error } = await supabase.auth.passkey.update({ passkeyId: id, friendlyName: name });
+  if (error) throw new Error(error.message);
+}
+
+export async function removePasskey(id: string): Promise<void> {
+  const { error } = await supabase.auth.passkey.delete({ passkeyId: id });
+  if (error) throw new Error(error.message);
+}
+
+/** Signs in with a passkey, with no address or password typed at all. */
+export async function signInWithPasskey(): Promise<void> {
+  const { error } = await supabase.auth.signInWithPasskey();
+  if (error) throw new Error(error.message);
+}

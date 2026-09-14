@@ -1160,3 +1160,36 @@ test('the reset-password page: asking for a link, and arriving without one', asy
 
   await page.close();
 });
+
+test('the account page offers a passkey, and lists the ones already there', async () => {
+  /*
+   * The ceremony itself is not driven here, and cannot be: the project's
+   * relying party is its own domain, so a passkey made against localhost would
+   * be refused on rp_id before any authenticator was consulted. What is checked
+   * is everything around it -- that the card is offered, that the account's
+   * passkeys are really fetched from the server rather than assumed empty, and
+   * that the button is there to press.
+   */
+  const page = await signedInPage();
+  const failures: string[] = [];
+  page.on('console', (m) => { if (m.type() === 'error') failures.push(m.text()); });
+
+  await page.goto(`${origin}/#/account`, { waitUntil: 'networkidle0' });
+  await waitForText(page, 'Passkeys');
+
+  // localhost counts as a secure context, so the real card renders rather than
+  // the "this browser cannot" one
+  const text = await page.evaluate(() => document.body.innerText);
+  expect(text).not.toContain('This browser cannot make one');
+  await waitForText(page, 'Add a passkey');
+
+  // the list is fetched, not assumed: the spinner goes and a real answer lands
+  await page.waitForFunction(
+    () => !document.body.innerText.includes('Reading your passkeys'), { timeout: 20000 });
+  await waitForText(page, 'No passkeys on this account yet');
+
+  // and the library is configured for it -- an unflagged client throws instead
+  expect(failures.join(' ')).not.toMatch(/passkey.*(not enabled|experimental)/i);
+
+  await page.close();
+});

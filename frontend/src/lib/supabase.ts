@@ -26,5 +26,18 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
      * construction rather than by winning a race.
      */
     flowType: 'pkce',
+    /*
+     * Passkeys are behind a flag in the library: without it every passkey
+     * method throws at call time rather than being absent, so there is nothing
+     * to feature-detect against. The project has them enabled, with its
+     * relying party set.
+     *
+     * Where they will and will not work is worth knowing: the relying party is
+     * bound to one domain, so a passkey made on the app's own domain is not
+     * offered on localhost or on the github.io address. That is WebAuthn doing
+     * its job -- a passkey is tied to the site it was made for -- and it is
+     * why the tests check the plumbing rather than the ceremony.
+     */
+    experimental: { passkey: true },
   },
 });

@@ -7,10 +7,13 @@
  * dashboard would have meant a delete-everything button on the page an
  * organizer uses every day.
  */
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import * as api from '../lib/api';
-import { signOut } from '../lib/auth';
+import {
+  addPasskey, listPasskeys, passkeysPossible, removePasskey, renamePasskey, signOut,
+  type Passkey,
+} from '../lib/auth';
 import { navigate } from '../lib/router';
 import type { Organization } from '../lib/types';
 import { Banner, Card, Spinner } from '../components/ui';
@@ -31,6 +34,8 @@ export function Account({ session }: { session: Session }) {
               no password of its own to change here. */}
           {google ? <p className="faint">Signed in with Google.</p> : null}
         </div>
+
+        <Passkeys />
 
         <Card>
           <h3>Sign out</h3>
@@ -149,6 +154,114 @@ function DeleteAccount({ email }: { email: string }) {
           </div>
         </div>
       )}
+    </Card>
+  );
+}
+
+/**
+ * The passkeys on this account, and the button that adds one.
+ *
+ * A passkey is this device proving it is this device -- a fingerprint, a face,
+ * a screen lock -- instead of a password typed into a phone at the back of a
+ * hall. Adding one does not take the password away; it is another way in, and
+ * an organizer keeps whichever they like.
+ *
+ * The list is the honest part of this. A passkey lives on a device, and an
+ * account with three of them and no idea which is which is worse than an
+ * account with none, so each says when it was made and when it was last used,
+ * and can be named.
+ */
+function Passkeys() {
+  const [keys, setKeys] = useState<Passkey[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const supported = passkeysPossible();
+
+  const load = useCallback(async () => {
+    try {
+      setKeys(await listPasskeys());
+      setError('');
+    } catch (e) {
+      // A project without passkeys turned on answers every one of these calls
+      // with a refusal. Saying so beats an empty list that looks like a bug.
+      setError(e instanceof Error ? e.message : 'Could not read your passkeys.');
+      setKeys([]);
+    }
+  }, []);
+
+  useEffect(() => { if (supported) void load(); }, [supported, load]);
+
+  const add = async () => {
+    setBusy(true); setError('');
+    try {
+      await addPasskey();
+      await load();
+    } catch (e) {
+      const said = e instanceof Error ? e.message : 'Could not add a passkey.';
+      // The browser says "NotAllowedError" when somebody dismisses the prompt,
+      // which is not an error worth showing as one.
+      setError(/notallowed|abort/i.test(said)
+        ? '' : said);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!supported) {
+    return (
+      <Card>
+        <h3>Passkeys</h3>
+        <p className="faint">
+          This browser cannot make one — it needs WebAuthn and a secure (https)
+          connection. Open the app on its own address and it will offer them.
+        </p>
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <h3>Passkeys</h3>
+      <p className="faint">
+        Sign in with the fingerprint, face or screen lock this device already
+        uses, instead of typing a password. Your password keeps working.
+      </p>
+
+      {error ? <Banner kind="error">{error}</Banner> : null}
+
+      {keys === null ? <Spinner label="Reading your passkeys" /> : null}
+
+      {keys?.map((key) => (
+        <div key={key.id} className="row" style={{ marginBottom: 8 }}>
+          <input className="grow" name="passkey_name"
+                 defaultValue={key.friendly_name ?? 'Unnamed passkey'}
+                 onBlur={(e) => {
+                   const next = e.target.value.trim();
+                   if (next && next !== key.friendly_name) {
+                     void renamePasskey(key.id, next).then(load).catch(() => {});
+                   }
+                 }} />
+          <span className="faint">
+            {key.last_used_at
+              ? `used ${new Date(key.last_used_at).toLocaleDateString()}`
+              : `added ${new Date(key.created_at).toLocaleDateString()}`}
+          </span>
+          <button className="danger small"
+                  onClick={() => {
+                    if (!confirm('Remove this passkey? The device it is on can no longer sign in with it.')) return;
+                    void removePasskey(key.id).then(load).catch(
+                      (e) => setError(e instanceof Error ? e.message : 'Could not remove it.'));
+                  }}>
+            Remove
+          </button>
+        </div>
+      ))}
+
+      {keys?.length === 0 ? <p className="faint">No passkeys on this account yet.</p> : null}
+
+      <button className="ghost" disabled={busy} onClick={() => void add()}>
+        {busy ? 'Waiting for your device…' : 'Add a passkey'}
+      </button>
     </Card>
   );
 }
