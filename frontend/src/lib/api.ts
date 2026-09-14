@@ -493,12 +493,21 @@ export async function questionsForBallot(ballotId: string): Promise<AnyQuestion[
   );
 }
 
+/**
+ * Creates a question, with whatever of its own settings are known already.
+ *
+ * `extra` is how the add form sets the things that used to need a second pass
+ * through the editor -- how many seats an election has, chiefly. Each type has
+ * its own table, so these are ordinary columns of that table and not a bag of
+ * options to be interpreted.
+ */
 export async function createQuestion(
   type: QuestionType, ballotId: string, prompt: string, sortOrder: number,
+  extra: Record<string, unknown> = {},
 ): Promise<AnyQuestion> {
   const { data, error } = await supabase
     .from(QUESTION_TABLE[type])
-    .insert({ ballot_id: ballotId, prompt, sort_order: sortOrder })
+    .insert({ ballot_id: ballotId, prompt, sort_order: sortOrder, ...extra })
     .select().single();
   return { ...unwrap(data, error), type } as AnyQuestion;
 }

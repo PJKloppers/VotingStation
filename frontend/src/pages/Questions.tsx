@@ -17,8 +17,6 @@ import { Banner, Card, Check, Empty, Field, Pill, Spinner } from '../components/
 export function Questions({ ballotId }: { ballotId: string }) {
   const [questions, setQuestions] = useState<AnyQuestion[] | null>(null);
   const [error, setError] = useState('');
-  const [adding, setAdding] = useState<QuestionType>('yes_no');
-  const [prompt, setPrompt] = useState('');
 
   const load = useCallback(async () => {
     try {
@@ -30,18 +28,6 @@ export function Questions({ ballotId }: { ballotId: string }) {
   }, [ballotId]);
 
   useEffect(() => { void load(); }, [load]);
-
-  const add = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    try {
-      await api.createQuestion(adding, ballotId, prompt, (questions?.length ?? 0) + 1);
-      setPrompt('');
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not add it.');
-    }
-  };
 
   if (questions === null) return <Spinner label="Loading questions" />;
 
@@ -55,25 +41,187 @@ export function Questions({ ballotId }: { ballotId: string }) {
             <QuestionCard key={`${q.type}:${q.id}`} question={q} onChanged={load} />
           ))}
 
-      <Card>
-        <h3>Add a question</h3>
-        <form onSubmit={add}>
-          <Field label="Type">
-            <select value={adding} onChange={(e) => setAdding(e.target.value as QuestionType)}>
-              {(Object.keys(QUESTION_TYPE_NAMES) as QuestionType[]).map((t) => (
-                <option key={t} value={t}>{QUESTION_TYPE_NAMES[t]}</option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Question">
-            <input required value={prompt} name="new_question"
-                   onChange={(e) => setPrompt(e.target.value)}
-                   placeholder={adding === 'yes_no' ? 'Adopt the 2026 budget' : 'Elect the Chairperson'} />
-          </Field>
-          <button type="submit" className="primary" disabled={!prompt.trim()}>Add question</button>
-        </form>
-      </Card>
+      <AddQuestion ballotId={ballotId} after={questions.length} onAdded={load} />
     </div>
+  );
+}
+
+
+/**
+ * The three kinds of question, in the words an organizer would use.
+ *
+ * The type names in the database are accurate and no help at the moment of
+ * choosing: "Highest outright" and "Highest X options" differ by one word and
+ * by everything else. Each is named for what it decides and shown with the
+ * sentence that separates it from its neighbour.
+ */
+const KINDS: Array<{
+  type: QuestionType; title: string; blurb: string; example: string; action: string;
+}> = [
+  {
+    type: 'yes_no',
+    title: 'A motion',
+    blurb: 'Carried or defeated, on a threshold you set.',
+    example: 'Adopt the 2026 budget',
+    action: 'Add this motion',
+  },
+  {
+    type: 'highest_outright',
+    title: 'One winner',
+    blurb: 'The option with the most votes takes it.',
+    example: 'Elect the Chairperson',
+    action: 'Add this election',
+  },
+  {
+    type: 'highest_x',
+    title: 'Several winners',
+    blurb: 'The top few take seats — you say how many.',
+    example: 'Elect three to the committee',
+    // the same words as the one above it: both are elections, and a label bent
+    // out of the card's title read "Add this several winners"
+    action: 'Add this election',
+  },
+];
+
+/**
+ * Adding a question, in one pass.
+ *
+ * It used to take two. The form made a question out of a type and a prompt,
+ * and everything that made it a usable question -- the names standing for
+ * election, how many seats there were -- lived in the editor on the card it
+ * had just made. So an organizer added a question, hunted for it, opened it,
+ * and filled it in, having already told the form what it was for.
+ *
+ * Now the form asks for what the chosen kind actually needs and nothing else:
+ * a motion is a sentence, an election is a sentence and a list of names. The
+ * per-question editor is still there for changing any of it afterwards.
+ */
+function AddQuestion({ ballotId, after, onAdded }: {
+  ballotId: string; after: number; onAdded: () => Promise<void> | void;
+}) {
+  const [kind, setKind] = useState<QuestionType>('yes_no');
+  const [prompt, setPrompt] = useState('');
+  const [names, setNames] = useState('');
+  const [seats, setSeats] = useState(1);
+  const [pool, setPool] = useState('');
+  const [pools, setPools] = useState<OptionPool[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const chosen = KINDS.find((k) => k.type === kind)!;
+  const wantsOptions = kind !== 'yes_no';
+  const parsed = parseOptionList(names);
+
+  useEffect(() => {
+    let live = true;
+    api.myOptionPools()
+      .then((p) => { if (live) setPools(p); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, []);
+
+  const reset = () => {
+    setPrompt(''); setNames(''); setSeats(1); setPool('');
+  };
+
+  const add = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true); setError('');
+    try {
+      // Only the columns this type has: each kind is its own table.
+      const extra = kind === 'highest_x'
+        ? { winner_count: seats, select_max: seats, select_min: 1 }
+        : {};
+      const made = await api.createQuestion(kind, ballotId, prompt.trim(), after + 1, extra);
+
+      // The options go on in the same breath, from whichever the organizer
+      // used -- a pasted list, a pool, or both.
+      if (wantsOptions && parsed.labels.length > 0) {
+        await api.createOptions(kind, made.id, parsed.labels, 1);
+      }
+      if (wantsOptions && pool) {
+        await api.copyPoolIntoQuestion(pool, kind, made.id);
+      }
+
+      reset();
+      await onAdded();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not add it.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card>
+      <h3>Add a question</h3>
+
+      {error ? <Banner kind="error">{error}</Banner> : null}
+
+      <form onSubmit={add}>
+        <div className="kind-choice" role="radiogroup" aria-label="What kind of question">
+          {KINDS.map((k) => (
+            <button
+              key={k.type}
+              type="button"
+              role="radio"
+              aria-checked={kind === k.type}
+              className={`kind${kind === k.type ? ' picked' : ''}`}
+              onClick={() => { setKind(k.type); setError(''); }}
+            >
+              <span className="kind-title">{k.title}</span>
+              <span className="kind-blurb">{k.blurb}</span>
+            </button>
+          ))}
+        </div>
+
+        <Field label="Question">
+          <input required value={prompt} name="new_question"
+                 onChange={(e) => setPrompt(e.target.value)}
+                 placeholder={chosen.example} />
+        </Field>
+
+        {kind === 'highest_x' ? (
+          <Field label="Seats" help="How many of them are elected.">
+            <input type="number" min={1} name="add_seats" style={{ maxWidth: 120 }}
+                   value={seats}
+                   onChange={(e) => setSeats(Math.max(1, Number(e.target.value)))} />
+          </Field>
+        ) : null}
+
+        {wantsOptions ? (
+          <>
+            <Field label="Options"
+                   help="One per line, or comma separated. Paste a column straight from a spreadsheet.">
+              <textarea name="add_options" rows={3} value={names}
+                        onChange={(e) => setNames(e.target.value)}
+                        placeholder={'Ann Meyer\nBob Ncube\nCyd Patel'} />
+            </Field>
+
+            {pools.length > 0 ? (
+              <Field label="Or take them from a pool">
+                <select name="add_pool" value={pool} onChange={(e) => setPool(e.target.value)}>
+                  <option value="">—</option>
+                  {pools.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </Field>
+            ) : null}
+
+            {parsed.labels.length > 0 ? (
+              <p className="faint">
+                {parsed.labels.length} option{parsed.labels.length === 1 ? '' : 's'} to add
+                {parsed.duplicates.length > 0
+                  ? ` · ${parsed.duplicates.length} repeated and dropped` : ''}
+              </p>
+            ) : null}
+          </>
+        ) : null}
+
+        <button type="submit" className="primary" disabled={busy || !prompt.trim()}>
+          {busy ? 'Adding…' : chosen.action}
+        </button>
+      </form>
+    </Card>
   );
 }
 

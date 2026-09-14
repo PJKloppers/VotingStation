@@ -115,7 +115,7 @@ describe('creating a ballot in the browser', () => {
     await clickByText(page, 'button', 'Questions');
     await page.waitForSelector('input[name="new_question"]', { timeout: 15000 });
     await page.type('input[name="new_question"]', 'Approve the agenda');
-    await clickByText(page, 'button', 'Add question');
+    await clickByText(page, 'button', 'Add this motion');
     await waitForText(page, 'Approve the agenda');
 
     const { data } = await organizer.from('questions_yes_no')
@@ -133,11 +133,13 @@ describe('creating a ballot in the browser', () => {
     await waitForText(page, title);
     await clickByText(page, 'button', 'Questions');
 
-    // An election, which is the kind of question that has options.
-    await page.waitForSelector('select', { timeout: 15000 });
-    await page.select('select', 'highest_outright');
+    // An election, which is the kind of question that has options. Added bare
+    // on purpose: what is under test below is the editor's paste box, so this
+    // one is made without using the add form's own.
+    await page.waitForSelector('input[name="new_question"]', { timeout: 15000 });
+    await clickByText(page, 'button', 'One winner');
     await page.type('input[name="new_question"]', 'Elect the secretary');
-    await clickByText(page, 'button', 'Add question');
+    await clickByText(page, 'button', 'Add this election');
     await waitForText(page, 'Elect the secretary');
 
     // That question's own editor -- the yes/no one above it also has an Edit
@@ -1367,3 +1369,73 @@ test('the account page offers to change a password, because this account has one
 
   await page.close();
 });
+
+test('a question is added complete in one pass, options and seats and all', async () => {
+  /*
+   * This used to take two. The form made a question out of a type and a
+   * prompt, and everything that made it usable -- the names standing, how many
+   * seats -- lived in the editor on the card it had just made. What is checked
+   * here is that one submit now leaves a question nothing else has to be done
+   * to, which is the whole of the change.
+   */
+  const { data: user } = await organizer.auth.getUser();
+  const { data: org } = await organizer.from('organizations')
+    .select('id').eq('owner_id', user.user!.id).limit(1).single();
+  const { data: b } = await organizer.from('ballots').insert({
+    org_id: org!.id, slug: uniqueSlug('oneq'), title: 'One-pass questions', status: 'draft',
+  }).select('id').single();
+  const ballot = b!.id;
+
+  const page = await signedInPage();
+  try {
+    await page.goto(`${origin}/#/manage/${ballot}`, { waitUntil: 'networkidle0' });
+    await clickByText(page, 'button', 'Questions');
+    await waitForText(page, 'Add a question');
+
+    // a motion asks for a sentence and nothing else
+    expect(await page.$('textarea[name="add_options"]')).toBeNull();
+    expect(await page.$('input[name="add_seats"]')).toBeNull();
+    await page.type('input[name="new_question"]', 'Adopt the 2026 budget');
+    await clickByText(page, 'button', 'Add this motion');
+    await waitForText(page, 'Adopt the 2026 budget');
+
+    // an election asks for the names and the seats, in the same form
+    await clickByText(page, 'button', 'Several winners');
+    await page.waitForSelector('textarea[name="add_options"]', { timeout: 10000 });
+    await page.type('input[name="new_question"]', 'Elect three to the committee');
+    await page.$eval('input[name="add_seats"]', (el) => {
+      const set = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype, 'value')!.set!;
+      set.call(el, '3');
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await page.evaluate(() => {
+      const el = document.querySelector('textarea[name="add_options"]') as HTMLTextAreaElement;
+      const set = Object.getOwnPropertyDescriptor(
+        window.HTMLTextAreaElement.prototype, 'value')!.set!;
+      set.call(el, 'Ann Meyer\nBob Ncube\nCyd Patel');
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await waitForText(page, '3 options to add');
+    await clickByText(page, 'button', 'Add this election');
+    await waitForText(page, 'Elect three to the committee');
+
+    // the database, not the screen: complete, without the editor being opened
+    const { data: motions } = await organizer.from('questions_yes_no')
+      .select('prompt').eq('ballot_id', ballot);
+    expect(motions!.map((m) => m.prompt)).toEqual(['Adopt the 2026 budget']);
+
+    const { data: elections } = await organizer.from('questions_highest_x')
+      .select('id, prompt, winner_count, select_max').eq('ballot_id', ballot);
+    expect(elections).toHaveLength(1);
+    expect(elections![0]!.winner_count).toBe(3);
+    expect(elections![0]!.select_max).toBe(3);
+
+    const { data: options } = await organizer.from('options_highest_x')
+      .select('label').eq('question_id', elections![0]!.id).order('sort_order');
+    expect(options!.map((o) => o.label)).toEqual(['Ann Meyer', 'Bob Ncube', 'Cyd Patel']);
+  } finally {
+    await organizer.from('ballots').delete().eq('id', ballot);
+    await page.close();
+  }
+}, 90000);
