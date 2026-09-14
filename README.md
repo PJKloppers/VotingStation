@@ -1,8 +1,15 @@
 # VotingStation
 
+**[vote.paulkloppers.co.za](https://vote.paulkloppers.co.za/)**
+
 Token voting for organizations. An organizer signs in, sets up a ballot, hands
 each voter a six-digit PIN, and opens one question at a time from the chair.
 The count publishes itself.
+
+Voters never have accounts. They hold a slip of paper with a code on it, which
+is the only thing standing between the meeting and the vote — so the slip, and
+what the database will do on the strength of it, is most of what this project
+is about.
 
 The client is a static React page — no server of ours anywhere. Every rule that
 matters lives in Postgres, because a page anyone can edit cannot be trusted with
@@ -32,6 +39,9 @@ columns rather than a shared bag of nullable ones.
 Every question table repeats the same block of common columns — `ballot_id`,
 `prompt`, `description`, `sort_order`, `enabled`, `gate_open`, `opened_at`,
 `closed_at` — and the `ballot_questions` view unions them into one ordered list.
+(`enabled` is pinned true by a check constraint: it once let a question be kept
+off a ballot, nothing used it, and with no control left a question switched off
+would have vanished from the chair's list with no way back.)
 
 **Adding a type** is three things and nothing else:
 
@@ -120,9 +130,14 @@ says how many are outstanding; the Live tab shows the same count per question.
 
 ## What is public and what is not
 
-- **Private to their owner** — organizations. Nothing public reads that table:
-  a voter gets the organization's name from `find_ballots_for_pin`, which is
-  security definer and does not go through the policy.
+- **Private to their owner** — organizations. Nothing public reads that table.
+  A voter gets what they need through security-definer functions that do not go
+  through the policy: `resolve_ballot` turns a printed `<org>/<ballot>` pair
+  into a ballot, `org_ballots` answers with one organization's *published*
+  ballots by slug, and `ballot_logo` gives the mark's path. There is no way to
+  list organizations, and no way to ask which ballots a PIN belongs to — that
+  lookup was removed, and with it the guess that probed every published ballot
+  at once.
 - **Public** — published ballots, their questions and options,
   and the votes on any question that has **finished**, if the ballot publishes
   results at all.
@@ -168,9 +183,8 @@ belongs to which organization and is owner-only. The bucket is public to *read* 
 a voter has to see the mark without an account, and a signed URL per slip on a
 printed sheet cannot work — and writable only into `<org id>/…`, which the
 storage policies check with `app.owns_organization`. The path reaches a voter
-through `voter_state`, `ballot_results`, `find_ballots_for_pin` and
-`ballot_logo`, so nothing had to make a directory of organizations readable
-again.
+through `voter_state`, `ballot_results`, `org_ballots` and `ballot_logo`, so
+nothing had to make a directory of organizations readable again.
 
 The QR carries the mark over about 5% of its area, well inside what error
 correction level M recovers. Printed sheets inline it as a data URI, because
@@ -187,6 +201,78 @@ one candidate), repeats are dropped case-insensitively against what the question
 already has — the same way the unique index behind it matches — and the button
 says how many will actually be added.
 
+### Option pools
+
+The same twelve names go to a meeting three times in an evening — elect a
+chair, elect a secretary, elect the committee — and retyping them is where
+mistakes come from. An **option pool** is that list, kept once on the
+organization it describes, and copied onto any question that needs it from
+`/pools` or from the question editor.
+
+It is a **copy, not a link**, and that is the point rather than a shortcut:
+once the entries are options they belong to the question, so editing the pool
+afterwards cannot reach back into a ballot that may already have votes on it.
+The copy appends, so two names typed by hand before it survive, and it answers
+with how many it added. A yes/no question is refused — it has no options to
+copy into.
+
+Pools live in `option_pools` and `option_pool_entries`, owner-scoped through
+`app.owns_organization` and `app.owns_pool`. The copy itself is
+`copy_pool_into_question`, which checks that *both* ends belong to the caller
+before it writes. The limit is three, counted per account rather than per
+organization, so spreading pools around does not buy more of them.
+
+## The organizer's account
+
+Signing in is by password, by **Google**, or by **passkey**. OAuth comes back
+through PKCE rather than the implicit flow, and that is not a preference: the
+implicit flow returns the session in the URL *fragment*, and the fragment is
+this app's router — the return would arrive as a route reading
+`access_token=…`. PKCE puts a `?code=` in the query string, which the router
+never looks at, so the route survives the round trip by construction rather
+than by winning a race.
+
+A **passkey** is added from the account page and signs in with no address
+typed at all, because a passkey identifies the account as well as proving it.
+Adding one does not take the password away. Each is named and says when it was
+last used, since an account with three passkeys and no idea which is which is
+worse than an account with none. They are bound to one domain by their relying
+party, so a passkey made on the app's own address is not offered on localhost
+or under the `/VotingStation/` prefix — WebAuthn doing its job.
+
+**Forgot your password** sends a reset link, and answers the same sentence
+whether or not that address has an account: telling a stranger which addresses
+are registered is the one thing that form could leak. Which flow a returning
+code belongs to rides in `?flow=recovery`, because PKCE appends its `?code=` to
+whatever redirect URL it was given and a `#/reset-password` on the end would
+put the code inside the fragment where the library never looks.
+
+**Closing an account** takes everything with it. `delete_my_account()` takes no
+arguments, and that is the whole of its security: the only row it can delete is
+`auth.uid()`'s — there is no target to forge. The rest is cascade —
+organizations from the owner, ballots from the organization, and from a ballot
+its questions, PINs and votes, plus the mark's row and the object in the
+bucket. The page counts what is about to go and says it ("2 organizations and
+5 ballots", not "your data") and wants the address typed.
+
+An organization can be deleted the same way from its settings, with the same
+counting and the same typed confirmation.
+
+### The letters
+
+The auth emails live in `supabase/templates/` — confirm signup, reset
+password, magic link, invite, email change, and the reauthentication code — in
+the app's own palette, and installed by `scripts/push-email-templates.ts`.
+
+That script uses the Management API and **not** `supabase config push`, which
+is the whole reason it exists: `config push` sends the entire auth config, so
+anything `config.toml` leaves unsaid goes as its default and would overwrite
+the providers, the redirect URLs and the site URL the project actually has. A
+PATCH names only the mailer fields. It prints what differs and stops unless
+given `--apply`, then reads the config back and compares each template against
+the file on disk, because a 200 means the request was accepted and not that the
+project holds what the repository holds.
+
 ## Ballots do not live forever
 
 Every ballot is deleted **30 days** after it is made, by a `pg_cron` job that
@@ -199,6 +285,7 @@ through triggers and defaults:
 | `app.ballot_retention()` | 30 days |
 | `app.max_organizations_per_user()` | 5 |
 | `app.max_ballots_per_organization()` | 20 |
+| `app.max_option_pools_per_user()` | 3 |
 
 Nothing vanishes quietly: the ballot's own page carries the countdown and a
 **Renew** button that pushes the full window out again. An owner may bring an
@@ -208,7 +295,8 @@ rather than whenever the purge next runs.
 
 **PINs print as slips.** The PINs tab renders one cut-out per active PIN — a QR
 of the voting link down the left, the ballot title, the code and the link in the
-middle, and the organization's mark on the right. The printed link is
+middle, the organization's mark, and the PIN's own barcode standing up the right
+edge. The printed link is
 `/vote/<org slug>/<ballot slug>`, because a slip is read by a person and typed
 by one; `resolve_ballot` turns that pair back into the ballot, since
 organizations are owner-only and a voter cannot do that join. Both forms of the
@@ -227,7 +315,31 @@ straight back out of the address bar, so it does not sit in the history of a
 shared phone. It is off by default because it makes the printed code the
 credential: anyone who photographs the slip can vote with it.
 
-`public.app_limits()` exposes the two quotas so a form can say "4 of 5
+**The PIN also prints as a barcode**, always, whichever way that setting is
+left — Code 128 in subset C, which reads digits in pairs, so six of them are
+three data symbols rather than six. It stands on end because a slip is far
+wider than it is tall and a barcode's need is the opposite way round: its
+length divided by its 88 modules is the width of the narrowest bar, and that is
+what decides whether it reads. Lying across the slip that was 0.204mm; standing
+up the slip's height it is 0.324mm, comfortably clear of the ~0.19mm below
+which scanners start to miss. The encoder is ours, so the tests decode what it
+draws with ZXing — somebody else's — rather than running our own encoder
+backwards and agreeing with themselves.
+
+**A slip can be scanned back in.** *Scan to delete* on the PINs tab points the
+camera at a slip and takes that PIN off the roll, votes and all: the person at
+the desk has the paper in their hand and no wish to find six digits in a table
+of two thousand. It reads either code — the barcode always carries the PIN, the
+QR only when the sheet was printed that way — and each scan stops and asks,
+with the vote count in the question, because it cannot be undone. The voter's
+PIN screen offers the same reader, so nobody has to type six digits at all.
+
+Both decoders try the frame and its quarter turn: the barcode is printed
+standing up, ZXing's luminance source reports no rotation support so it will
+not try the other way round on its own, and somebody holding a slip up to a
+camera holds it whichever way it came off the pile.
+
+`public.app_limits()` exposes all three so a form can say "4 of 5
 organizations" without a constant in the client drifting from the database that
 enforces it.
 
@@ -249,20 +361,37 @@ header says which of the two is currently carrying it.
 ## Layout
 
 ```
-frontend/            the static client
+frontend/              the static client
   src/
-    lib/               supabase client, the API surface, routing, the rules, the live feed
-    pages/             Home, Vote, Results, Live, SignIn, Admin, Manage, Questions, Tokens
-    components/ui.tsx  the small shared pieces
-    app.css            one stylesheet
+    lib/
+      supabase.ts        the client, and the two flags that matter: PKCE, passkeys
+      api.ts             every call the client can make, in one place
+      auth.ts            sessions, Google, passkeys, the reset flow
+      router.ts          hash routing, and the one path route
+      rules.ts           the selection rules, shared with the tests
+      qr.ts barcode.ts   the two encoders, written here and decoded in the tests
+      codes.ts camera.ts reading either code out of a camera frame
+      scan.ts resolve.ts what a scanned code points at, and how a link resolves
+      watch.ts live.ts   the voter's auto-refresh, and the chair's monitor feed
+      options.ts slug.ts the pasted-list parser, and slugs
+    pages/             Home Vote Results Live SignIn Admin Manage Questions
+                       Tokens Organization Pools Account ResetPassword
+                       PrivacyAndTerms
+    components/        Header Footer GithubPill ui, and the three scanners:
+                       Scanner (a voter arriving), PinScanner (a voter's own
+                       PIN), PinDeleteScanner (the desk taking one back)
+    app.css            one stylesheet, print sheet included
   public/              copied into dist/ verbatim: the manifest and its icons
   icons/               the icon artwork as SVG, and the script that renders it
   tests/
-    unit/              the selection rules and the router, no network
+    unit/              the selection rules, the router, the scanner's parsing
     integration/       the whole system against the real database
-    e2e/               the built page driven in Brave
+    e2e/               the built page driven in Brave, camera and printer included
   build.ts             bun build, HTML entry point in and a static directory out
-supabase/migrations/   the schema, in order
+scripts/               push-email-templates.ts, the Management-API installer
+supabase/
+  migrations/          the schema, in order
+  templates/           the auth emails
 .github/workflows/     build and publish to Pages on a change under frontend/
 ```
 
@@ -285,6 +414,17 @@ and `TEST_PASSWORD`, or point `TEST_CREDENTIALS_FILE` at a two-line file holding
 the address and then the password. Nothing of the sort is committed.
 
 The browser suite drives **Brave**; set `BRAVE_PATH` if it is somewhere unusual.
+The camera tests need **ffmpeg**, which is what builds the fake capture device —
+a still of a real code, encoded by this project's own encoder, played into the
+browser as a video file. They skip themselves where there is none, and there is
+a test whose only job is to fail if that ever happens silently.
+
+Three things the suites deliberately do not do. They never send an auth email:
+the project is on Supabase's own SMTP, which rate-limits to a handful an hour,
+and a suite that burned them would take the real reset flow down with it. They
+never press the last button on *delete this account*, because that account is
+the one they sign in as. And they cannot run the passkey ceremony, which is
+bound to the deployed domain by its relying party.
 
 ## Deploy
 
@@ -295,6 +435,20 @@ with **Settings → Pages → Source: GitHub Actions** once.
 Routing is on the hash (`#/vote/<id>`), which needs no rewrite rule, and the
 build emits relative asset paths, so the same output works at a domain root or
 under a `/VotingStation/` prefix.
+
+One page is the exception. `/privacy-and-terms-of-service` answers to a real
+path as well, because that is the URL an OAuth reviewer has to be given and a
+fragment is a poor thing to hand one. Pages serves `404.html` for a path it has
+no file for, and the build makes that a copy of the app, so the request arrives
+with the route still in `location.pathname`; only the last segment is matched,
+since the deploy prefix is not knowable from inside the client.
+
+That has a consequence worth knowing, because it bit once: reaching that page
+and then clicking into the app leaves the address bar reading
+`/privacy-and-terms-of-service#/admin` — the fragment moves, the path does not.
+Anything building an absolute URL from `location.pathname` would carry the
+document's path with it, which is why every one of them goes through
+`appBase()` instead.
 
 The Supabase URL and publishable key are compiled in. Both are public values —
 the key only ever grants the `anon` role, which the grants and policies above
