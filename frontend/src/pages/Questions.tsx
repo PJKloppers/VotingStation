@@ -96,46 +96,99 @@ const KINDS: Array<{
  * a motion is a sentence, an election is a sentence and a list of names. The
  * per-question editor is still there for changing any of it afterwards.
  */
+/**
+ * Adding a question, a step at a time.
+ *
+ * It used to take two passes: the form made a stub out of a type and a
+ * sentence, and everything that made it a usable question lived in the editor
+ * on the card it had just made. Then it was one long form, which asked for
+ * everything at once and so asked for things that make no sense yet.
+ *
+ * So it is a flow. Each step appears when the one before it is answered, and
+ * each asks only what that kind of question actually has. The order is not
+ * arbitrary: the votes come last because they are bounded by the options --
+ * you cannot say "pick three" before there are three to pick from, and the
+ * form knows how many there are only once they have been given.
+ *
+ * The steps stay on screen once passed, so going back to change an earlier
+ * answer is scrolling up rather than starting again.
+ */
 function AddQuestion({ ballotId, after, onAdded }: {
   ballotId: string; after: number; onAdded: () => Promise<void> | void;
 }) {
-  const [kind, setKind] = useState<QuestionType>('yes_no');
+  const [kind, setKind] = useState<QuestionType | null>(null);
   const [prompt, setPrompt] = useState('');
   const [names, setNames] = useState('');
-  const [seats, setSeats] = useState(1);
   const [pool, setPool] = useState('');
-  const [pools, setPools] = useState<OptionPool[]>([]);
+  const [poolSize, setPoolSize] = useState(0);
+  const [pools, setPools] = useState<OptionPool[] | null>(null);
+  const [seats, setSeats] = useState(1);
+  const [least, setLeast] = useState(1);
+  const [most, setMost] = useState(1);
+  const [mostTouched, setMostTouched] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
-  const chosen = KINDS.find((k) => k.type === kind)!;
-  const wantsOptions = kind !== 'yes_no';
+  const chosen = KINDS.find((k) => k.type === kind) ?? null;
+  const wantsOptions = kind === 'highest_outright' || kind === 'highest_x';
+  const wantsVotes = kind === 'highest_x';
   const parsed = parseOptionList(names);
+  const optionCount = parsed.labels.length + poolSize;
 
   useEffect(() => {
     let live = true;
     api.myOptionPools()
       .then((p) => { if (live) setPools(p); })
-      .catch(() => {});
+      .catch(() => { if (live) setPools([]); });
     return () => { live = false; };
   }, []);
 
+  // A pool contributes to the count the votes below are bounded by, so its size
+  // has to be known here and not merely at submit.
+  useEffect(() => {
+    let live = true;
+    if (!pool) { setPoolSize(0); return; }
+    api.poolEntries(pool)
+      .then((e) => { if (live) setPoolSize(e.length); })
+      .catch(() => { if (live) setPoolSize(0); });
+    return () => { live = false; };
+  }, [pool]);
+
+  // The usual shape is "pick as many as there are seats", so the maximum
+  // follows the seats until somebody says otherwise.
+  useEffect(() => {
+    if (!mostTouched) setMost(seats);
+  }, [seats, mostTouched]);
+
+  const tooManySeats = wantsVotes && optionCount > 0 && seats > optionCount;
+  const tooManyPicks = wantsVotes && optionCount > 0 && most > optionCount;
+  const backwards = wantsVotes && least > most;
+  const votesWrong = tooManySeats || tooManyPicks || backwards;
+
+  /*
+   * Options are not required to add the question. An organizer who knows the
+   * election is happening but not yet who is standing should be able to put it
+   * on the ballot and fill it in later -- the editor on its card is there for
+   * exactly that. What is refused is a contradiction: more seats than options,
+   * or a minimum above the maximum.
+   */
+  const ready = kind !== null && prompt.trim() !== '' && !votesWrong;
+
   const reset = () => {
-    setPrompt(''); setNames(''); setSeats(1); setPool('');
+    setKind(null); setPrompt(''); setNames(''); setPool(''); setPoolSize(0);
+    setSeats(1); setLeast(1); setMost(1); setMostTouched(false);
   };
 
   const add = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!kind) return;
     setBusy(true); setError('');
     try {
-      // Only the columns this type has: each kind is its own table.
       const extra = kind === 'highest_x'
-        ? { winner_count: seats, select_max: seats, select_min: 1 }
+        ? { winner_count: seats, select_min: least, select_max: most }
         : {};
       const made = await api.createQuestion(kind, ballotId, prompt.trim(), after + 1, extra);
 
-      // The options go on in the same breath, from whichever the organizer
-      // used -- a pasted list, a pool, or both.
       if (wantsOptions && parsed.labels.length > 0) {
         await api.createOptions(kind, made.id, parsed.labels, 1);
       }
@@ -155,75 +208,147 @@ function AddQuestion({ ballotId, after, onAdded }: {
   return (
     <Card>
       <h3>Add a question</h3>
-
       {error ? <Banner kind="error">{error}</Banner> : null}
 
       <form onSubmit={add}>
-        <div className="kind-choice" role="radiogroup" aria-label="What kind of question">
-          {KINDS.map((k) => (
-            <button
-              key={k.type}
-              type="button"
-              role="radio"
-              aria-checked={kind === k.type}
-              className={`kind${kind === k.type ? ' picked' : ''}`}
-              onClick={() => { setKind(k.type); setError(''); }}
-            >
-              <span className="kind-title">{k.title}</span>
-              <span className="kind-blurb">{k.blurb}</span>
-            </button>
-          ))}
-        </div>
+        <Step n={1} title="What kind of question?">
+          <div className="kind-choice" role="radiogroup" aria-label="What kind of question">
+            {KINDS.map((k) => (
+              <button
+                key={k.type}
+                type="button"
+                role="radio"
+                aria-checked={kind === k.type}
+                className={`kind${kind === k.type ? ' picked' : ''}`}
+                onClick={() => { setKind(k.type); setError(''); }}
+              >
+                <span className="kind-title">{k.title}</span>
+                <span className="kind-blurb">{k.blurb}</span>
+              </button>
+            ))}
+          </div>
+        </Step>
 
-        <Field label="Question">
-          <input required value={prompt} name="new_question"
-                 onChange={(e) => setPrompt(e.target.value)}
-                 placeholder={chosen.example} />
-        </Field>
-
-        {kind === 'highest_x' ? (
-          <Field label="Seats" help="How many of them are elected.">
-            <input type="number" min={1} name="add_seats" style={{ maxWidth: 120 }}
-                   value={seats}
-                   onChange={(e) => setSeats(Math.max(1, Number(e.target.value)))} />
-          </Field>
+        {chosen ? (
+          <Step n={2} title="What is being asked?">
+            <Field label="Question">
+              <input required autoFocus value={prompt} name="new_question"
+                     onChange={(e) => setPrompt(e.target.value)}
+                     placeholder={chosen.example} />
+            </Field>
+          </Step>
         ) : null}
 
-        {wantsOptions ? (
-          <>
+        {chosen && wantsOptions && prompt.trim() ? (
+          <Step n={3} title="What can be voted for?">
             <Field label="Options"
                    help="One per line, or comma separated. Paste a column straight from a spreadsheet.">
-              <textarea name="add_options" rows={3} value={names}
+              <textarea name="add_options" rows={4} value={names}
                         onChange={(e) => setNames(e.target.value)}
                         placeholder={'Ann Meyer\nBob Ncube\nCyd Patel'} />
             </Field>
 
-            {pools.length > 0 ? (
-              <Field label="Or take them from a pool">
-                <select name="add_pool" value={pool} onChange={(e) => setPool(e.target.value)}>
-                  <option value="">—</option>
-                  {pools.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                </select>
-              </Field>
-            ) : null}
+            <Field label="Or take a list you already keep"
+                   help={pools && pools.length === 0
+                     ? 'You have no option pools yet. Pools is where you keep a list once and reuse it.'
+                     : 'Added on top of anything typed above.'}>
+              <select name="add_pool" value={pool}
+                      disabled={!pools || pools.length === 0}
+                      onChange={(e) => setPool(e.target.value)}>
+                <option value="">
+                  {pools && pools.length === 0 ? 'No pools yet' : 'No pool'}
+                </option>
+                {(pools ?? []).map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </Field>
 
-            {parsed.labels.length > 0 ? (
+            <p className="faint">
+              {optionCount === 0
+                ? 'Nothing to vote for yet.'
+                : `${optionCount} option${optionCount === 1 ? '' : 's'}`}
+              {parsed.labels.length > 0 && poolSize > 0
+                ? ` — ${parsed.labels.length} typed and ${poolSize} from the pool` : ''}
+              {parsed.duplicates.length > 0
+                ? ` · ${parsed.duplicates.length} repeated and dropped` : ''}
+            </p>
+          </Step>
+        ) : null}
+
+        {chosen && wantsVotes && optionCount > 0 ? (
+          <Step n={4} title="How does the voting work?">
+            <div className="row vote-rules">
+              <Field label="Seats" help="How many are elected.">
+                <input type="number" min={1} name="add_seats" value={seats}
+                       onChange={(e) => setSeats(Math.max(1, Number(e.target.value)))} />
+              </Field>
+              <Field label="Pick at least" help="Fewest a voter may choose.">
+                <input type="number" min={1} name="add_min" value={least}
+                       onChange={(e) => setLeast(Math.max(1, Number(e.target.value)))} />
+              </Field>
+              <Field label="Pick at most" help="Most a voter may choose.">
+                <input type="number" min={1} name="add_max" value={most}
+                       onChange={(e) => { setMostTouched(true); setMost(Math.max(1, Number(e.target.value))); }} />
+              </Field>
+            </div>
+
+            {votesWrong ? (
+              <Banner kind="error">
+                {backwards
+                  ? 'The fewest a voter may pick cannot be more than the most.'
+                  : tooManySeats
+                    ? `There are only ${optionCount} options, so there cannot be ${seats} seats.`
+                    : `There are only ${optionCount} options, so nobody can pick ${most}.`}
+              </Banner>
+            ) : (
               <p className="faint">
-                {parsed.labels.length} option{parsed.labels.length === 1 ? '' : 's'} to add
-                {parsed.duplicates.length > 0
-                  ? ` · ${parsed.duplicates.length} repeated and dropped` : ''}
+                Each voter picks {least === most ? `exactly ${least}` : `between ${least} and ${most}`}
+                {' '}of the {optionCount}. The top {seats} {seats === 1 ? 'is' : 'are'} elected.
+              </p>
+            )}
+          </Step>
+        ) : null}
+
+        {chosen ? (
+          <>
+            <button type="submit" className="primary" disabled={busy || !ready}>
+              {busy ? 'Adding…' : chosen.action}
+            </button>
+            {/* A disabled button with no reason beside it is a dead end, and
+                this one has four ways of being disabled. */}
+            {!ready && !busy ? (
+              <p className="faint" style={{ marginTop: 8 }}>
+                {prompt.trim() === ''
+                  ? 'Type the question above first.'
+                  : 'Check the voting rules above.'}
+              </p>
+            ) : null}
+            {ready && !busy && wantsOptions && optionCount === 0 ? (
+              <p className="faint" style={{ marginTop: 8 }}>
+                Nothing to vote for yet — you can add the options now or from the
+                question itself later.
               </p>
             ) : null}
           </>
         ) : null}
-
-        <button type="submit" className="primary" disabled={busy || !prompt.trim()}>
-          {busy ? 'Adding…' : chosen.action}
-        </button>
       </form>
     </Card>
   );
 }
+
+/** One numbered step of the add-a-question flow. */
+function Step({ n, title, children }: {
+  n: number; title: string; children: React.ReactNode;
+}) {
+  return (
+    <section className="step">
+      <p className="step-head"><span className="step-n">{n}</span>{title}</p>
+      {children}
+    </section>
+  );
+}
+
 
 function QuestionCard({ question, onChanged }: { question: AnyQuestion; onChanged: () => void }) {
   const [open, setOpen] = useState(false);

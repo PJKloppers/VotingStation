@@ -1052,3 +1052,28 @@ button.share-copy[data-state="copied"]:hover {
 .kind-title { font-weight: 600; font-size: 0.95rem; color: var(--ink); }
 .kind-blurb { font-size: 0.82rem; line-height: 1.4; color: var(--ink-soft); font-weight: 400; }
 .kind.picked .kind-blurb { color: var(--accent-strong); }
+
+/* The add-a-question flow: one step at a time, each staying on screen once it
+   has been answered so going back is scrolling rather than starting again. */
+.step { padding: 4px 0 2px; }
+.step + .step {
+  margin-top: 18px; padding-top: 18px;
+  border-top: 1px solid var(--rule-soft);
+}
+.step-head {
+  display: flex; align-items: center; gap: 9px;
+  margin: 0 0 12px;
+  font-weight: 600; font-size: 0.95rem; color: var(--ink);
+}
+.step-n {
+  display: inline-grid; place-items: center; flex: none;
+  width: 22px; height: 22px; border-radius: 50%;
+  background: var(--accent-wash); color: var(--accent-strong);
+  font-size: 0.76rem; font-weight: 700;
+}
+
+/* Three small numbers on one line, wrapping to their own rows on a phone
+   rather than squeezing to the width of their spinners. */
+.vote-rules { align-items: flex-start; gap: 14px; }
+.vote-rules .field { margin-bottom: 0; flex: 1 1 130px; }
+.vote-rules input { max-width: 120px; }

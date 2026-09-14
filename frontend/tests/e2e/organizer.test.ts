@@ -113,6 +113,8 @@ describe('creating a ballot in the browser', () => {
     await waitForText(page, title);
 
     await clickByText(page, 'button', 'Questions');
+    await waitForText(page, 'What kind of question?');
+    await clickByText(page, 'button', 'A motion');
     await page.waitForSelector('input[name="new_question"]', { timeout: 15000 });
     await page.type('input[name="new_question"]', 'Approve the agenda');
     await clickByText(page, 'button', 'Add this motion');
@@ -136,8 +138,9 @@ describe('creating a ballot in the browser', () => {
     // An election, which is the kind of question that has options. Added bare
     // on purpose: what is under test below is the editor's paste box, so this
     // one is made without using the add form's own.
-    await page.waitForSelector('input[name="new_question"]', { timeout: 15000 });
+    await waitForText(page, 'What kind of question?');
     await clickByText(page, 'button', 'One winner');
+    await page.waitForSelector('input[name="new_question"]', { timeout: 15000 });
     await page.type('input[name="new_question"]', 'Elect the secretary');
     await clickByText(page, 'button', 'Add this election');
     await waitForText(page, 'Elect the secretary');
@@ -1392,31 +1395,54 @@ test('a question is added complete in one pass, options and seats and all', asyn
     await clickByText(page, 'button', 'Questions');
     await waitForText(page, 'Add a question');
 
+    // nothing is asked until the kind is chosen: the flow starts at step one
+    expect(await page.$('input[name="new_question"]')).toBeNull();
+
     // a motion asks for a sentence and nothing else
+    await clickByText(page, 'button', 'A motion');
+    await page.waitForSelector('input[name="new_question"]', { timeout: 10000 });
     expect(await page.$('textarea[name="add_options"]')).toBeNull();
     expect(await page.$('input[name="add_seats"]')).toBeNull();
     await page.type('input[name="new_question"]', 'Adopt the 2026 budget');
     await clickByText(page, 'button', 'Add this motion');
     await waitForText(page, 'Adopt the 2026 budget');
 
-    // an election asks for the names and the seats, in the same form
+    /*
+     * An election walks the steps in order, and the order is the point: the
+     * voting rules come last because they are bounded by the options. Step 4
+     * does not exist until there is something to vote for.
+     */
     await clickByText(page, 'button', 'Several winners');
-    await page.waitForSelector('textarea[name="add_options"]', { timeout: 10000 });
+    await page.waitForSelector('input[name="new_question"]', { timeout: 10000 });
     await page.type('input[name="new_question"]', 'Elect three to the committee');
-    await page.$eval('input[name="add_seats"]', (el) => {
-      const set = Object.getOwnPropertyDescriptor(
-        window.HTMLInputElement.prototype, 'value')!.set!;
-      set.call(el, '3');
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-    await page.evaluate(() => {
-      const el = document.querySelector('textarea[name="add_options"]') as HTMLTextAreaElement;
-      const set = Object.getOwnPropertyDescriptor(
-        window.HTMLTextAreaElement.prototype, 'value')!.set!;
-      set.call(el, 'Ann Meyer\nBob Ncube\nCyd Patel');
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-    await waitForText(page, '3 options to add');
+
+    await page.waitForSelector('textarea[name="add_options"]', { timeout: 10000 });
+    expect(await page.$('input[name="add_seats"]')).toBeNull();   // nothing to bound yet
+
+    const fill = (selector: string, value: string) => page.evaluate(
+      (sel: string, v: string) => {
+        const el = document.querySelector(sel) as HTMLInputElement | HTMLTextAreaElement;
+        const proto = el instanceof HTMLTextAreaElement
+          ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+        Object.getOwnPropertyDescriptor(proto, 'value')!.set!.call(el, v);
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      }, selector, value);
+
+    await fill('textarea[name="add_options"]', 'Ann Meyer\nBob Ncube\nCyd Patel');
+    await waitForText(page, '3 options');
+
+    // now the rules appear, and are checked against how many there are
+    await page.waitForSelector('input[name="add_seats"]', { timeout: 10000 });
+    await fill('input[name="add_seats"]', '9');
+    await waitForText(page, 'there cannot be 9 seats');
+    expect(await page.$eval('form .primary',
+      (b) => (b as HTMLButtonElement).disabled)).toBe(true);
+
+    await fill('input[name="add_seats"]', '3');
+    await fill('input[name="add_min"]', '2');
+    await fill('input[name="add_max"]', '3');
+    await waitForText(page, 'between 2 and 3');
+
     await clickByText(page, 'button', 'Add this election');
     await waitForText(page, 'Elect three to the committee');
 
@@ -1426,9 +1452,10 @@ test('a question is added complete in one pass, options and seats and all', asyn
     expect(motions!.map((m) => m.prompt)).toEqual(['Adopt the 2026 budget']);
 
     const { data: elections } = await organizer.from('questions_highest_x')
-      .select('id, prompt, winner_count, select_max').eq('ballot_id', ballot);
+      .select('id, prompt, winner_count, select_min, select_max').eq('ballot_id', ballot);
     expect(elections).toHaveLength(1);
     expect(elections![0]!.winner_count).toBe(3);
+    expect(elections![0]!.select_min).toBe(2);
     expect(elections![0]!.select_max).toBe(3);
 
     const { data: options } = await organizer.from('options_highest_x')
