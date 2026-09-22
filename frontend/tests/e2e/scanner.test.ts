@@ -42,13 +42,16 @@ async function fakeCamera(url: string, into: string): Promise<void> {
       <path d="${qrPath(code)}" fill="#000"/>
     </svg></svg>`;
 
-  const browser = await launchBrave();
-  const page = await browser.newPage();
-  await page.setViewport({ width: 640, height: 480 });
-  await page.setContent(`<body style="margin:0">${svg}</body>`);
   const png = `${into}.png`;
-  await page.screenshot({ path: png as `${string}.png` });
-  await browser.close();
+  const browser = await launchBrave();
+  try {
+    const page = await browser.newPage();
+    await page.setViewport({ width: 640, height: 480 });
+    await page.setContent(`<body style="margin:0">${svg}</body>`);
+    await page.screenshot({ path: png as `${string}.png` });
+  } finally {
+    await browser.close();
+  }
 
   await Bun.$`ffmpeg -y -loglevel error -loop 1 -i ${png} -t 6 -r 10 -pix_fmt yuv420p ${into}`.quiet();
   await rm(png, { force: true });
@@ -75,13 +78,16 @@ async function fakeBarcodeCamera(pin: string, into: string): Promise<void> {
       </g>
     </svg></svg>`;
 
-  const browser = await launchBrave();
-  const page = await browser.newPage();
-  await page.setViewport({ width: 640, height: 480 });
-  await page.setContent(`<body style="margin:0">${svg}</body>`);
   const png = `${into}.png`;
-  await page.screenshot({ path: png as `${string}.png` });
-  await browser.close();
+  const browser = await launchBrave();
+  try {
+    const page = await browser.newPage();
+    await page.setViewport({ width: 640, height: 480 });
+    await page.setContent(`<body style="margin:0">${svg}</body>`);
+    await page.screenshot({ path: png as `${string}.png` });
+  } finally {
+    await browser.close();
+  }
 
   await Bun.$`ffmpeg -y -loglevel error -loop 1 -i ${png} -t 8 -r 10 -pix_fmt yuv420p ${into}`.quiet();
   await rm(png, { force: true });
@@ -144,6 +150,7 @@ describe('the scanner', () => {
   test('reads a printed code and opens that ballot', async () => {
     if (!HAVE_FFMPEG) return;
     const browser = await browserWatching(feed);
+    try {
     const page = await browser.newPage();
     await page.setViewport({ width: 420, height: 900 });
 
@@ -164,12 +171,15 @@ describe('the scanner', () => {
     await page.waitForSelector('.pin-entry', { timeout: 15000 });
     await waitForText(page, 'Scanned Ballot');
 
-    await browser.close();
+    } finally {
+      await browser.close();
+    }
   });
 
   test('the camera and its decoder are not in the first load', async () => {
     if (!HAVE_FFMPEG) return;
     const browser = await browserWatching(feed);
+    try {
     const page = await browser.newPage();
     const scripts: string[] = [];
     page.on('request', (r) => { if (r.url().endsWith('.js')) scripts.push(r.url()); });
@@ -187,13 +197,16 @@ describe('the scanner', () => {
 
     // Pressing the button is what fetches them.
     expect(scripts.length).toBeGreaterThan(before);
-    await browser.close();
+    } finally {
+      await browser.close();
+    }
   });
 
   test('typing the line under the code works without a camera at all', async () => {
     if (!HAVE_FFMPEG) return;
     // No fake device: getUserMedia has nothing to give, which is the point.
     const browser = await launchBrave();
+    try {
     const page = await browser.newPage();
     await page.setViewport({ width: 420, height: 900 });
 
@@ -207,12 +220,15 @@ describe('the scanner', () => {
 
     await page.waitForSelector('.pin-entry', { timeout: 15000 });
     await waitForText(page, 'Scanned Ballot');
-    await browser.close();
+    } finally {
+      await browser.close();
+    }
   });
 
   test('a link that is not one of ours is refused, not followed', async () => {
     if (!HAVE_FFMPEG) return;
     const browser = await launchBrave();
+    try {
     const page = await browser.newPage();
     await page.goto(`${origin}/#/`, { waitUntil: 'networkidle0' });
     await page.waitForSelector('input[name="ballot_link"]', { timeout: 15000 });
@@ -223,7 +239,9 @@ describe('the scanner', () => {
     });
     await waitForText(page, 'does not look like a ballot link');
     expect(await page.evaluate(() => window.location.hash)).toBe('#/');
-    await browser.close();
+    } finally {
+      await browser.close();
+    }
   });
 });
 
@@ -280,6 +298,7 @@ describe('scanning a slip to take its PIN off the roll', () => {
     expect(votesBefore.count).toBe(1);
 
     const browser = await browserWatching(camera);
+    try {
     const page = await browser.newPage();
     await page.setViewport({ width: 900, height: 1000 });
 
@@ -320,7 +339,9 @@ describe('scanning a slip to take its PIN off the roll', () => {
       .select('id', { count: 'exact', head: true }).eq('ballot_id', ballot);
     expect(votesAfter.count).toBe(0);
 
-    await browser.close();
+    } finally {
+      await browser.close();
+    }
   }, 90000);
 });
 
@@ -365,6 +386,7 @@ describe('a voter reading their own PIN off the slip', () => {
   test('scans the barcode and is let onto the floor', async () => {
     if (!HAVE_FFMPEG) return;
     const browser = await browserWatching(camera);
+    try {
     const page = await browser.newPage();
     await page.setViewport({ width: 420, height: 900 });
 
@@ -380,12 +402,15 @@ describe('a voter reading their own PIN off the slip', () => {
     expect(text).not.toContain(pin);
     expect(await page.$('.pin-entry')).toBeNull();
 
-    await browser.close();
+    } finally {
+      await browser.close();
+    }
   }, 90000);
 
   test('the camera and its decoders are not in the first load', async () => {
     if (!HAVE_FFMPEG) return;
     const browser = await browserWatching(camera);
+    try {
     const page = await browser.newPage();
     const scripts: string[] = [];
     page.on('response', (r) => {
@@ -409,6 +434,8 @@ describe('a voter reading their own PIN off the slip', () => {
     const afterBytes = await weight(scripts);
     expect(afterBytes - beforeBytes).toBeGreaterThan(200_000);
 
-    await browser.close();
+    } finally {
+      await browser.close();
+    }
   }, 90000);
 });
