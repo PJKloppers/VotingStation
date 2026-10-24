@@ -17,6 +17,7 @@ import type {
 import { useBallotId, type Address } from '../lib/resolve';
 import { thresholdRule } from '../lib/rules';
 import { Banner, Card, Empty, Pill, Spinner } from '../components/ui';
+import { RecursionResult } from '../components/RecursionResult';
 
 export function Results(address: Address) {
   const { ballotId, pending } = useBallotId(address);
@@ -104,6 +105,7 @@ export function QuestionTally({ result }: { result: QuestionResult }) {
         {result.type === 'yes_no' ? <YesNo tally={result.tally} /> : null}
         {result.type === 'highest_outright' ? <Outright tally={result.tally} /> : null}
         {result.type === 'highest_x' ? <HighestX tally={result.tally} /> : null}
+        {result.type === 'recursion_filter' ? <RecursionResult tally={result.tally} /> : null}
       </div>
     </>
   );

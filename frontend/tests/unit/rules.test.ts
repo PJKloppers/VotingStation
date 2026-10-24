@@ -131,3 +131,42 @@ describe('slugs', () => {
     expect(slugify('x'.repeat(47) + ' y')).not.toMatch(/-$/);
   });
 });
+
+describe('recursion filter', () => {
+  const base = question({
+    type: 'recursion_filter',
+    options: [
+      { id: 'a', label: 'Ann', description: '' },
+      { id: 'b', label: 'Ben', description: '' },
+      { id: 'c', label: 'Cyd', description: '' },
+    ],
+    config: { round: 0, kind: 'nomination', pick_min: 1, pick_max: 2,
+              allow_abstain: false, abstain_label: 'Abstain' },
+  });
+
+  test('takes up to the most a round allows', () => {
+    expect(selectionError(base, ['a'])).toBeNull();
+    expect(selectionError(base, ['a', 'b'])).toBeNull();
+    expect(selectionError(base, ['a', 'b', 'c'])).toBe('Choose at most 2.');
+  });
+
+  test('refuses nobody at all', () => {
+    expect(selectionError(base, [])).toBe('Choose someone.');
+  });
+
+  test('ignores someone who is not in this round', () => {
+    expect(selectionError(base, ['gone'])).toBe('Choose someone.');
+  });
+
+  test('holds a round to its least', () => {
+    const two = question({ ...base, config: { ...(base.config as object), kind: 'elimination', round: 2, pick_min: 2 } });
+    expect(selectionError(two, ['a'])).toBe('Choose at least 2.');
+    expect(selectionError(two, ['a', 'c'])).toBeNull();
+  });
+
+  test('abstains only when the question allows it', () => {
+    expect(selectionError(base, ['abstain'])).toBe('This question does not allow abstentions.');
+    const open = question({ ...base, config: { ...(base.config as object), allow_abstain: true } });
+    expect(selectionError(open, ['abstain'])).toBeNull();
+  });
+});

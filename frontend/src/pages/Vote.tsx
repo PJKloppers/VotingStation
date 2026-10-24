@@ -20,7 +20,7 @@ import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import * as api from '../lib/api';
 import { useBallotId, type Address } from '../lib/resolve';
 import { DEFAULT_BACKSTOP_MS, useBallotWatch } from '../lib/watch';
-import { minimumPicks, selectionError, type HighestXConfig } from '../lib/rules';
+import { minimumPicks, selectionError, type HighestXConfig, type RecursionConfig } from '../lib/rules';
 import { navigate } from '../lib/router';
 import type {
   Accepted, Ballot, BallotOption, BallotResults, LobbyQuestion, QuestionResult,
@@ -338,7 +338,9 @@ function Floor({ state, ballotId, pin, busy, onAnswered, onExit }: {
 
           {questions.map((q) => (
             <QuestionCard
-              key={q.id}
+              // A recursion filter keeps its id from round to round, but each
+              // round is a fresh ballot with a different list: start it clean.
+              key={q.type === 'recursion_filter' ? `${q.id}:${roundOf(q)}` : q.id}
               question={q}
               ballotId={ballotId}
               pin={pin}
@@ -402,6 +404,7 @@ function QuestionCard({
 
   return (
     <Card>
+      {question.type === 'recursion_filter' ? <RoundLabel question={question} /> : null}
       <div className="row" style={{ marginBottom: 6 }}>
         <h2 className="grow">{question.prompt}</h2>
         {question.voted
@@ -444,6 +447,10 @@ function QuestionCard({
   );
 }
 
+function roundOf(q: LobbyQuestion): number {
+  return (q.config as unknown as RecursionConfig).round;
+}
+
 /** What this voter already has standing, as the controls express it. */
 function initial(q: LobbyQuestion): string[] {
   if (q.previous === null) return [];
@@ -460,6 +467,10 @@ function cast(
     const one = chosen[0] ?? null;
     return api.castHighestOutright(ballotId, pin, q.id,
       one === 'abstain' ? null : one, one === 'abstain');
+  }
+  if (q.type === 'recursion_filter') {
+    const abstain = chosen.length === 1 && chosen[0] === 'abstain';
+    return api.castRecursionFilter(ballotId, pin, q.id, abstain ? [] : chosen, abstain);
   }
   return api.castHighestX(ballotId, pin, q.id, chosen);
 }
@@ -515,6 +526,42 @@ function Choices({ question, chosen, onChange }: {
     );
   }
 
+  if (question.type === 'recursion_filter') {
+    const cfg = question.config as unknown as RecursionConfig;
+    const min = Math.max(cfg.pick_min, 1);
+    const abstaining = chosen.length === 1 && chosen[0] === 'abstain';
+    const picks = abstaining ? [] : chosen;
+    const toggle = (id: string) => {
+      if (cfg.pick_max === 1) return onChange([id]);
+      if (picks.includes(id)) onChange(picks.filter((x) => x !== id));
+      else if (picks.length < cfg.pick_max) onChange([...picks, id]);
+    };
+    return (
+      <>
+        <p className="faint">
+          {cfg.kind === 'nomination'
+            ? `Nominate ${cfg.pick_max === 1 ? 'one person' : `up to ${cfg.pick_max} people`}.`
+            : min === cfg.pick_max
+              ? `Choose ${min === 1 ? 'one' : `exactly ${min}`}.`
+              : `Choose ${min} to ${cfg.pick_max}.`}
+          {cfg.pick_max > 1 ? ` · ${picks.length} chosen` : ''}
+        </p>
+        <div style={{ marginTop: 8 }}>
+          {question.options.map((o: BallotOption) => (
+            <Choice key={o.id} label={o.label} note={o.description} multi={cfg.pick_max > 1}
+                    selected={picks.includes(o.id)}
+                    disabled={cfg.pick_max > 1 && !picks.includes(o.id) && picks.length >= cfg.pick_max}
+                    onClick={() => toggle(o.id)} />
+          ))}
+          {cfg.allow_abstain ? (
+            <Choice label={cfg.abstain_label} selected={abstaining}
+                    onClick={() => onChange(['abstain'])} />
+          ) : null}
+        </div>
+      </>
+    );
+  }
+
   const cfg = question.config as unknown as HighestXConfig;
   const min = minimumPicks(cfg);
   const toggle = (id: string) => {
@@ -537,6 +584,19 @@ function Choices({ question, chosen, onChange }: {
         ))}
       </div>
     </>
+  );
+}
+
+/**
+ * Which round this is. Never "round 2 of 5": nobody knows how many rounds
+ * there will be until one person is left.
+ */
+function RoundLabel({ question }: { question: LobbyQuestion }) {
+  const cfg = question.config as unknown as RecursionConfig;
+  return (
+    <p className="eyebrow">
+      {cfg.kind === 'nomination' ? 'Nominations' : `Round ${cfg.round}`}
+    </p>
   );
 }
 

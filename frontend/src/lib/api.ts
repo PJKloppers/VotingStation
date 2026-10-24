@@ -10,6 +10,7 @@ import { supabase, SUPABASE_URL } from './supabase';
 import { fingerprint } from './fingerprint';
 import type {
   Accepted, Ballot, BallotResults, HighestOutrightQuestion, HighestXQuestion,
+  RecursionFilterQuestion,
   Organization, OrganizationImage, OptionPool, OptionPoolEntry, OrgPage,
   QuestionOption, QuestionType,
   Refused, TokenReport, VoterState, YesNoQuestion,
@@ -69,6 +70,16 @@ export async function castHighestX(
   const { data, error } = await supabase.rpc('cast_highest_x', {
     p_ballot: ballotId, p_pin: pin, p_question: questionId,
     p_options: optionIds, p_fingerprint: fingerprint(),
+  });
+  return unwrap(data, error);
+}
+
+export async function castRecursionFilter(
+  ballotId: string, pin: string, questionId: string, optionIds: string[], abstain: boolean,
+): Promise<Accepted | Refused> {
+  const { data, error } = await supabase.rpc('cast_recursion_filter', {
+    p_ballot: ballotId, p_pin: pin, p_question: questionId,
+    p_options: abstain ? null : optionIds, p_abstain: abstain, p_fingerprint: fingerprint(),
   });
   return unwrap(data, error);
 }
@@ -472,17 +483,20 @@ const QUESTION_TABLE: Record<QuestionType, string> = {
   yes_no: 'questions_yes_no',
   highest_outright: 'questions_highest_outright',
   highest_x: 'questions_highest_x',
+  recursion_filter: 'questions_recursion_filter',
 };
 
 const OPTION_TABLE: Partial<Record<QuestionType, string>> = {
   highest_outright: 'options_highest_outright',
   highest_x: 'options_highest_x',
+  recursion_filter: 'options_recursion_filter',
 };
 
 export type AnyQuestion =
   | ({ type: 'yes_no' } & YesNoQuestion)
   | ({ type: 'highest_outright' } & HighestOutrightQuestion)
-  | ({ type: 'highest_x' } & HighestXQuestion);
+  | ({ type: 'highest_x' } & HighestXQuestion)
+  | ({ type: 'recursion_filter' } & RecursionFilterQuestion);
 
 /** Every question on a ballot, of every type, in ballot order. */
 export async function questionsForBallot(ballotId: string): Promise<AnyQuestion[]> {
@@ -598,7 +612,12 @@ export async function setGate(
 export interface Advanced {
   ok: boolean;
   error?: string;
-  action?: 'opened' | 'advanced' | 'finished';
+  action?: 'opened' | 'advanced' | 'finished' | 'round_closed';
+  /** A recursion filter's round, when that is what moved. */
+  round?: number;
+  message?: string;
+  /** What the chair has to do before "next" can go on. */
+  needs?: 'settle';
   closed?: { id: string; prompt: string };
   opened?: { id: string; prompt: string };
 }
@@ -608,6 +627,48 @@ export async function advanceBallot(ballotId: string): Promise<Advanced> {
   const { data, error } = await supabase.rpc('advance_ballot', { p_ballot: ballotId });
   return unwrap(data, error);
 }
+
+/* ------------------------------------------------ a recursion filter's rounds
+ * Each call answers { ok, error?, needs?, ... } rather than throwing, because
+ * "the cut falls on a tie" is a question for the chair, not a failure.
+ */
+
+export interface RoundAnswer {
+  ok: boolean;
+  error?: string;
+  message?: string;
+  needs?: 'tie_break' | 'drop_count' | 'shortlist';
+  /** On a tie at the cut: who is tied, and how many of them must go. */
+  tied?: Array<{ id: string; label: string }>;
+  drop_from_tie?: number;
+  action?: 'shortlisted' | 'next_round' | 'decided';
+  joins_round?: number;
+}
+
+async function roundCall(fn: string, args: Record<string, unknown>): Promise<RoundAnswer> {
+  const { data, error } = await supabase.rpc(fn, args);
+  return unwrap(data, error) as RoundAnswer;
+}
+
+export const settleRound = (questionId: string, tieDrop?: string[], shortlist?: string[]) =>
+  roundCall('settle_round', {
+    p_question: questionId, p_tie_drop: tieDrop ?? null, p_shortlist: shortlist ?? null,
+  });
+
+export const setRoundDropCount = (questionId: string, drop: number) =>
+  roundCall('set_round_drop_count', { p_question: questionId, p_drop: drop });
+
+export const setRoundPicks = (questionId: string, min: number, max: number) =>
+  roundCall('set_round_picks', { p_question: questionId, p_min: min, p_max: max });
+
+export const addCandidate = (questionId: string, optionId: string) =>
+  roundCall('add_candidate', { p_question: questionId, p_option: optionId });
+
+export const withdrawCandidate = (questionId: string, optionId: string) =>
+  roundCall('withdraw_candidate', { p_question: questionId, p_option: optionId });
+
+export const endRecursion = (questionId: string, winnerId: string | null) =>
+  roundCall('end_recursion', { p_question: questionId, p_winner: winnerId });
 
 export async function closeAllGates(ballotId: string): Promise<void> {
   const { error } = await supabase.rpc('close_all_gates', { p_ballot: ballotId });

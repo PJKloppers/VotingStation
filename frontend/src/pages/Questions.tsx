@@ -81,6 +81,13 @@ const KINDS: Array<{
     // out of the card's title read "Add this several winners"
     action: 'Add this election',
   },
+  {
+    type: 'recursion_filter',
+    title: 'Narrow it down',
+    blurb: 'Nominate from a pool, then drop the lowest round by round until one is left.',
+    example: 'Choose the Secretary',
+    action: 'Add this election',
+  },
 ];
 
 /**
@@ -126,11 +133,17 @@ function AddQuestion({ ballotId, after, onAdded }: {
   const [least, setLeast] = useState(1);
   const [most, setMost] = useState(1);
   const [mostTouched, setMostTouched] = useState(false);
+  // recursion filter
+  const [nominateMax, setNominateMax] = useState(1);
+  const [threshold, setThreshold] = useState(1);
+  const [stopOnMajority, setStopOnMajority] = useState(true);
+  const [allowAbstain, setAllowAbstain] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
   const chosen = KINDS.find((k) => k.type === kind) ?? null;
-  const wantsOptions = kind === 'highest_outright' || kind === 'highest_x';
+  const wantsOptions = kind === 'highest_outright' || kind === 'highest_x' || kind === 'recursion_filter';
+  const isRecursion = kind === 'recursion_filter';
   const wantsVotes = kind === 'highest_x';
   const parsed = parseOptionList(names);
   const optionCount = parsed.labels.length + poolSize;
@@ -162,7 +175,7 @@ function AddQuestion({ ballotId, after, onAdded }: {
 
   const tooManySeats = wantsVotes && optionCount > 0 && seats > optionCount;
   const tooManyPicks = wantsVotes && optionCount > 0 && most > optionCount;
-  const backwards = wantsVotes && least > most;
+  const backwards = (wantsVotes || isRecursion) && least > most;
   const votesWrong = tooManySeats || tooManyPicks || backwards;
 
   /*
@@ -177,6 +190,7 @@ function AddQuestion({ ballotId, after, onAdded }: {
   const reset = () => {
     setKind(null); setPrompt(''); setNames(''); setPool(''); setPoolSize(0);
     setSeats(1); setLeast(1); setMost(1); setMostTouched(false);
+    setNominateMax(1); setThreshold(1); setStopOnMajority(true); setAllowAbstain(false);
   };
 
   const add = async (e: React.FormEvent) => {
@@ -186,7 +200,13 @@ function AddQuestion({ ballotId, after, onAdded }: {
     try {
       const extra = kind === 'highest_x'
         ? { winner_count: seats, select_min: least, select_max: most }
-        : {};
+        : kind === 'recursion_filter'
+          ? {
+              nominate_max: nominateMax, nominate_threshold: threshold,
+              pick_min: least, pick_max: most,
+              stop_on_majority: stopOnMajority, allow_abstain: allowAbstain,
+            }
+          : {};
       const made = await api.createQuestion(kind, ballotId, prompt.trim(), after + 1, extra);
 
       if (wantsOptions && parsed.labels.length > 0) {
@@ -240,7 +260,7 @@ function AddQuestion({ ballotId, after, onAdded }: {
         ) : null}
 
         {chosen && wantsOptions && prompt.trim() ? (
-          <Step n={3} title="What can be voted for?">
+          <Step n={3} title={isRecursion ? 'Who is in the pool?' : 'What can be voted for?'}>
             <Field label="Options"
                    help="One per line, or comma separated. Paste a column straight from a spreadsheet.">
               <textarea name="add_options" rows={4} value={names}
@@ -307,6 +327,41 @@ function AddQuestion({ ballotId, after, onAdded }: {
                 {' '}of the {optionCount}. The top {seats} {seats === 1 ? 'is' : 'are'} elected.
               </p>
             )}
+          </Step>
+        ) : null}
+
+        {chosen && isRecursion && prompt.trim() ? (
+          <Step n={4} title="How do the rounds work?">
+            <div className="row vote-rules">
+              <Field label="Nominations per voter" help="Names each voter may put forward.">
+                <input type="number" min={1} name="add_nominate_max" value={nominateMax}
+                       onChange={(e) => setNominateMax(Math.max(1, Number(e.target.value)))} />
+              </Field>
+              <Field label="Nominations needed" help="To get onto the shortlist.">
+                <input type="number" min={1} name="add_threshold" value={threshold}
+                       onChange={(e) => setThreshold(Math.max(1, Number(e.target.value)))} />
+              </Field>
+            </div>
+            <div className="row vote-rules">
+              <Field label="Pick at least" help="In each round after nominations.">
+                <input type="number" min={1} name="add_min" value={least}
+                       onChange={(e) => setLeast(Math.max(1, Number(e.target.value)))} />
+              </Field>
+              <Field label="Pick at most" help="You can change this for any round.">
+                <input type="number" min={1} name="add_max" value={most}
+                       onChange={(e) => { setMostTouched(true); setMost(Math.max(1, Number(e.target.value))); }} />
+              </Field>
+            </div>
+            <Check label="Stop as soon as someone has a majority"
+                   checked={stopOnMajority} onChange={setStopOnMajority}
+                   help="More than half of a round's voters backing one person ends the vote. Off: keep going until one is left." />
+            <Check label="Allow abstentions" checked={allowAbstain} onChange={setAllowAbstain} />
+            {backwards
+              ? <Banner kind="error">The fewest a voter may pick cannot be more than the most.</Banner>
+              : <p className="faint">
+                  There is no set number of rounds. After each one you choose how many drop
+                  out, and break any tie at the cut. You can add people from the pool between rounds.
+                </p>}
           </Step>
         ) : null}
 
@@ -411,8 +466,15 @@ function QuestionCard({ question, onChanged }: { question: AnyQuestion; onChange
             <button className="danger row-end" onClick={() => void remove()}>Delete question</button>
           </div>
 
+          {question.type === 'recursion_filter' && (question.current_round > 0 || question.opened_at)
+            ? <Banner kind="info">
+                This vote has started, so its pool is managed from the Live tab: add
+                people from the pool or withdraw them between rounds.
+              </Banner>
+            : null}
           {question.type !== 'yes_no'
-            ? <Options type={question.type} questionId={question.id} />
+            ? <Options type={question.type} questionId={question.id}
+                       title={question.type === 'recursion_filter' ? 'The pool' : 'Options'} />
             : null}
         </div>
       )}
@@ -470,6 +532,45 @@ function TypeSettings({ question, value, set }: {
         <Check label="Winner must take an outright majority" checked={Boolean(value('require_majority'))}
                onChange={(v) => set('require_majority', v)}
                help="Without more than half the votes cast, the result is reported as no outright winner." />
+        <Check label="Allow abstentions" checked={Boolean(value('allow_abstain'))}
+               onChange={(v) => set('allow_abstain', v)} />
+      </>
+    );
+  }
+
+  if (question.type === 'recursion_filter') {
+    return (
+      <>
+        <div className="row">
+          <div className="grow">
+            <Field label="Nominations per voter">
+              <input type="number" min={1} value={Number(value('nominate_max'))}
+                     onChange={(e) => set('nominate_max', Number(e.target.value))} />
+            </Field>
+          </div>
+          <div className="grow">
+            <Field label="Nominations needed" help="To reach the shortlist.">
+              <input type="number" min={1} value={Number(value('nominate_threshold'))}
+                     onChange={(e) => set('nominate_threshold', Number(e.target.value))} />
+            </Field>
+          </div>
+        </div>
+        <div className="row">
+          <div className="grow">
+            <Field label="Pick at least, per round" help="Rounds already made keep their own.">
+              <input type="number" min={1} value={Number(value('pick_min'))}
+                     onChange={(e) => set('pick_min', Number(e.target.value))} />
+            </Field>
+          </div>
+          <div className="grow">
+            <Field label="Pick at most, per round">
+              <input type="number" min={1} value={Number(value('pick_max'))}
+                     onChange={(e) => set('pick_max', Number(e.target.value))} />
+            </Field>
+          </div>
+        </div>
+        <Check label="Stop as soon as someone has a majority" checked={Boolean(value('stop_on_majority'))}
+               onChange={(v) => set('stop_on_majority', v)} />
         <Check label="Allow abstentions" checked={Boolean(value('allow_abstain'))}
                onChange={(v) => set('allow_abstain', v)} />
       </>
@@ -562,7 +663,9 @@ function CopyFromPool({ type, questionId, onCopied }: {
   );
 }
 
-function Options({ type, questionId }: { type: QuestionType; questionId: string }) {
+function Options({ type, questionId, title = 'Options' }: {
+  type: QuestionType; questionId: string; title?: string;
+}) {
   const [options, setOptions] = useState<QuestionOption[] | null>(null);
   const [draft, setDraft] = useState('');
   const [error, setError] = useState('');
@@ -594,7 +697,7 @@ function Options({ type, questionId }: { type: QuestionType; questionId: string 
 
   return (
     <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--rule-soft)' }}>
-      <h3>Options</h3>
+      <h3>{title}</h3>
       {error ? <Banner kind="error">{error}</Banner> : null}
       {options.length === 0 ? <p className="faint">No options yet.</p> : null}
 

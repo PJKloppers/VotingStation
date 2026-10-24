@@ -1,11 +1,12 @@
 /** The shapes the database hands back. Mirrors the jsonb built in the RPCs. */
 
-export type QuestionType = 'yes_no' | 'highest_outright' | 'highest_x';
+export type QuestionType = 'yes_no' | 'highest_outright' | 'highest_x' | 'recursion_filter';
 
 export const QUESTION_TYPE_NAMES: Record<QuestionType, string> = {
   yes_no: 'Yes / No',
   highest_outright: 'Highest outright',
   highest_x: 'Highest X options',
+  recursion_filter: 'Recursion filter',
 };
 
 /** An organization's mark, as stored. */
@@ -128,6 +129,24 @@ export interface HighestXQuestion extends QuestionCommon {
   select_min: number;
   select_max: number;
   winner_count: number;
+}
+
+/**
+ * One person for a role, in rounds. The settings are the organizer's; the
+ * rest (current_round, phase, winner_id and the gate) only the round
+ * functions move.
+ */
+export interface RecursionFilterQuestion extends QuestionCommon {
+  nominate_max: number;
+  nominate_threshold: number;
+  pick_min: number;
+  pick_max: number;
+  stop_on_majority: boolean;
+  allow_abstain: boolean;
+  abstain_label: string;
+  current_round: number;
+  phase: 'nominating' | 'eliminating' | 'decided';
+  winner_id: string | null;
 }
 
 export interface QuestionOption {
@@ -259,6 +278,71 @@ export interface HighestXTally {
   options: CountedOption[];
 }
 
+/** One round of a recursion filter, as counted (live) or as it was settled. */
+export interface RecursionRoundTally {
+  round: number;
+  kind: 'nomination' | 'elimination';
+  gate_open: boolean;
+  opened: boolean;
+  settled: boolean;
+  voters: number;
+  /** Weighted voters who picked someone, i.e. did not abstain. */
+  ballots: number;
+  abstain: number;
+  pick_min: number;
+  pick_max: number;
+  threshold: number | null;
+  drop_count: number | null;
+  stop_on_majority: boolean;
+  majority: string | null;
+  drop: string[];
+  tied: string[];
+  tie_drop_count: number;
+  options: Array<{
+    id: string; label: string; description: string;
+    votes: number; share: number;
+    qualifies: boolean; drops: boolean; tied: boolean;
+  }>;
+}
+
+export interface RecursionRound {
+  round: number;
+  kind: 'nomination' | 'elimination';
+  settled: boolean;
+  drop_count: number | null;
+  tally: RecursionRoundTally;
+  dropped?: Array<{ id: string; label: string }>;
+  withdrawn?: Array<{ id: string; label: string }>;
+  shortlisted?: Array<{ id: string; label: string }>;
+  shortlist_by_chair?: boolean;
+  tie_broken_by_chair?: boolean;
+  ended_by_chair?: boolean;
+  how?: 'majority' | 'last_left' | 'chair' | 'no_winner';
+  winner?: string | null;
+}
+
+export type CandidateStatus = 'pool' | 'in' | 'dropped' | 'withdrawn' | 'winner';
+
+export interface RecursionCandidate {
+  id: string;
+  label: string;
+  description: string;
+  status: CandidateStatus;
+  joined_round: number | null;
+  dropped_round: number | null;
+  added_by_chair: boolean;
+}
+
+export interface RecursionTally {
+  phase: 'nominating' | 'eliminating' | 'decided';
+  current_round: number;
+  stop_on_majority: boolean;
+  nominate_threshold: number;
+  winner: { id: string; label: string } | null;
+  candidates: RecursionCandidate[];
+  rounds: RecursionRound[];
+}
+
 interface QuestionResultBase {
   id: string;
   prompt: string;
@@ -277,7 +361,8 @@ interface QuestionResultBase {
 export type QuestionResult =
   | (QuestionResultBase & { type: 'yes_no'; tally: YesNoTally })
   | (QuestionResultBase & { type: 'highest_outright'; tally: OutrightTally })
-  | (QuestionResultBase & { type: 'highest_x'; tally: HighestXTally });
+  | (QuestionResultBase & { type: 'highest_x'; tally: HighestXTally })
+  | (QuestionResultBase & { type: 'recursion_filter'; tally: RecursionTally });
 
 export interface BallotResults {
   ok: true;

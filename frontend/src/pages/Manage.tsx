@@ -14,6 +14,7 @@ import { AdminLinks } from './Admin';
 import { Questions } from './Questions';
 import { Results } from './Results';
 import { Tokens } from './Tokens';
+import { RecursionControls } from './RecursionControls';
 
 const TABS = ['Live', 'Questions', 'PINs', 'Settings', 'Results', 'Links'] as const;
 type Tab = (typeof TABS)[number];
@@ -119,6 +120,7 @@ function Live({ ballot, onFinished }: { ballot: Ballot; onFinished: () => void }
   const [results, setResults] = useState<BallotResults | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [note, setNote] = useState('');
 
   const load = useCallback(async () => {
     try {
@@ -157,6 +159,7 @@ function Live({ ballot, onFinished }: { ballot: Ballot; onFinished: () => void }
     try {
       const answer = await api.advanceBallot(ballot.id);
       if (!answer.ok) setError(answer.error ?? 'That did not work.');
+      else { setError(''); setNote(answer.message ?? ''); }
       await load();
       if (answer.action === 'finished') onFinished();
     } catch (e) {
@@ -169,6 +172,7 @@ function Live({ ballot, onFinished }: { ballot: Ballot; onFinished: () => void }
   return (
     <div className="stack">
       {error ? <Banner kind="error">{error}</Banner> : null}
+      {note && !error ? <Banner kind="info">{note}</Banner> : null}
       {ballot.status !== 'live'
         ? <Banner kind="info">
             This ballot is {ballot.status}. Voters cannot reach it until you publish it.
@@ -190,7 +194,7 @@ function Live({ ballot, onFinished }: { ballot: Ballot; onFinished: () => void }
             </div>
             <button className="primary" disabled={busy || enabled.length === 0}
                     onClick={() => void step()}>
-              {busy ? 'Working…' : stepButton(enabled)}
+              {busy ? 'Working…' : stepButton(enabled, results)}
             </button>
           </div>
         </Card>
@@ -249,6 +253,11 @@ function Live({ ballot, onFinished }: { ballot: Ballot; onFinished: () => void }
                 Public results
               </a>
             </div>
+
+            {tally?.type === 'recursion_filter' ? (
+              <RecursionControls key={`${q.id}:${tally.tally.current_round}`} questionId={q.id} tally={tally.tally} busy={busy}
+                                 act={(fn) => act(fn)} />
+            ) : null}
           </Card>
         );
       })}
@@ -290,14 +299,53 @@ function Turnout({ voted, expected, required }: {
  */
 function nextInLine(enabled: AnyQuestion[]): { open: AnyQuestion | null; next: AnyQuestion | null } {
   const open = enabled.find((q) => q.gate_open) ?? null;
-  if (!open) return { open: null, next: enabled[0] ?? null };
+  if (!open) {
+    // After a recursion filter is decided, "next" carries on from it, as the
+    // database does: from the question closed most recently.
+    const last = enabled
+      .filter((q) => q.closed_at)
+      .sort((a, b) => (b.closed_at ?? '').localeCompare(a.closed_at ?? ''))[0];
+    if (last?.type === 'recursion_filter' && last.phase === 'decided') {
+      return { open: null, next: enabled[enabled.indexOf(last) + 1] ?? null };
+    }
+    return { open: null, next: enabled[0] ?? null };
+  }
   const at = enabled.indexOf(open);
   return { open, next: enabled[at + 1] ?? null };
+}
+
+/**
+ * A recursion filter mid-race, with nothing open: the floor button carries on
+ * with it rather than starting the ballot again.
+ */
+function raceUnderWay(enabled: AnyQuestion[], results: BallotResults | null) {
+  for (const q of enabled) {
+    if (q.type !== 'recursion_filter' || q.phase === 'decided' || q.gate_open) continue;
+    const r = results?.questions.find((x) => x.id === q.id);
+    if (!r || r.type !== 'recursion_filter') continue;
+    const last = r.tally.rounds[r.tally.rounds.length - 1];
+    if (!last) continue;
+    const started = r.tally.current_round > 0 || last.tally.opened;
+    if (!started) continue;
+    return { q, round: r.tally.current_round, needsSettle: last.tally.opened && !last.settled };
+  }
+  return null;
 }
 
 function stepLabel(enabled: AnyQuestion[], results: BallotResults | null): string {
   const { open, next } = nextInLine(enabled);
   if (enabled.length === 0) return 'No questions on the ballot yet.';
+  if (open?.type === 'recursion_filter') {
+    const here = results?.questions.find((r) => r.id === open.id);
+    const count = here ? ` · ${here.voted} of ${here.expected} voted so far` : '';
+    return `Open: "${open.prompt}", ${open.current_round === 0 ? 'nominations' : `round ${open.current_round}`}${count}.`;
+  }
+  const race = !open ? raceUnderWay(enabled, results) : null;
+  if (race) {
+    return race.needsSettle
+      ? `"${race.q.prompt}" is waiting for you to settle ${race.round === 0 ? 'the nominations' : `round ${race.round}`} below.`
+      : `"${race.q.prompt}": round ${race.round} is ready to open.`;
+  }
   if (!open) return `Nothing is open. Next up: "${next?.prompt ?? '—'}".`;
   const here = results?.questions.find((r) => r.id === open.id);
   const count = here ? ` · ${here.voted} of ${here.expected} voted so far` : '';
@@ -306,9 +354,15 @@ function stepLabel(enabled: AnyQuestion[], results: BallotResults | null): strin
     : `Open: "${open.prompt}"${count}. This is the last question.`;
 }
 
-function stepButton(enabled: AnyQuestion[]): string {
+function stepButton(enabled: AnyQuestion[], results: BallotResults | null): string {
   const { open, next } = nextInLine(enabled);
-  if (!open) return 'Open the first question';
+  if (open?.type === 'recursion_filter') {
+    return open.current_round === 0 ? 'Close nominations' : `Close round ${open.current_round}`;
+  }
+  const race = !open ? raceUnderWay(enabled, results) : null;
+  if (race) return race.needsSettle ? 'Settle it first' : `Open round ${race.round}`;
+  if (!open) return next && next !== enabled[0] ? 'Open the next question'
+    : next ? 'Open the first question' : 'End the ballot';
   return next ? 'Close and open the next' : 'Close and end the ballot';
 }
 
@@ -319,6 +373,15 @@ function leadLine(result: QuestionResult | undefined): string {
     const t = result.tally;
     if (t.cast === 0) return 'No votes yet';
     return `${t.voters} voted · ${t.yes} ${t.labels.yes} / ${t.no} ${t.labels.no}`;
+  }
+  if (result.type === 'recursion_filter') {
+    const t = result.tally;
+    if (t.winner) return `Decided: ${t.winner.label}`;
+    if (t.phase === 'decided') return 'Ended with no winner';
+    const still = t.candidates.filter((c) => c.status === 'in').length;
+    return t.phase === 'nominating'
+      ? `Nominations · ${result.voted} voted`
+      : `Round ${t.current_round} · ${still} in · ${result.voted} voted`;
   }
   const t = result.tally;
   if (t.voters === 0) return 'No votes yet';

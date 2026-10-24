@@ -18,6 +18,7 @@ import type {
   Ballot, HighestXTally, OutrightTally, QuestionResult, YesNoTally,
 } from '../lib/types';
 import { Banner, Card, Empty, Pill, Spinner } from '../components/ui';
+import { RecursionResult } from '../components/RecursionResult';
 
 export function Live({ ballotId }: { ballotId: string }) {
   const [ballot, setBallot] = useState<Ballot | null>(null);
@@ -131,6 +132,7 @@ function MonitorCard({ result, changes }: { result: QuestionResult; changes: num
       {result.type === 'yes_no' ? <YesNo tally={result.tally} /> : null}
       {result.type === 'highest_outright' ? <Outright tally={result.tally} /> : null}
       {result.type === 'highest_x' ? <HighestX tally={result.tally} /> : null}
+      {result.type === 'recursion_filter' ? <RecursionResult tally={result.tally} chair /> : null}
     </div>
   );
 }

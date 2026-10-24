@@ -25,6 +25,9 @@ const QUESTION_TABLES = [
   'questions_yes_no',
   'questions_highest_outright',
   'questions_highest_x',
+  'questions_recursion_filter',
+  // a new round of a recursion filter opens here before its question moves
+  'rounds_recursion_filter',
 ] as const;
 
 /** A chair opening several gates at once should cost one refresh, not four. */

@@ -35,6 +35,7 @@ columns rather than a shared bag of nullable ones.
 | `yes_no` | `questions_yes_no` | fixed | `votes_yes_no` | carried when the Yes share clears the question's fraction of the **decisive** (non-abstaining) votes |
 | `highest_outright` | `questions_highest_outright` | `options_highest_outright` | `votes_highest_outright` | the single option with the most votes; optionally required to clear half of the votes cast |
 | `highest_x` | `questions_highest_x` | `options_highest_x` | `votes_highest_x` | the top `winner_count` options, with a tie at the cut-off reported rather than broken |
+| `recursion_filter` | `questions_recursion_filter` (+ `rounds_recursion_filter`) | `options_recursion_filter` (the pool) | `votes_recursion_filter` | nominate from a pool, then rounds that drop the bottom N until one is left or someone has a majority; the chair sets N each round and breaks ties at the cut. No fixed number of rounds |
 
 Every question table repeats the same block of common columns — `ballot_id`,
 `prompt`, `description`, `sort_order`, `enabled`, `gate_open`, `opened_at`,

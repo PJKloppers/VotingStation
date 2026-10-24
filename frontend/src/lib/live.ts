@@ -17,7 +17,11 @@ import { supabase } from './supabase';
 import type { BallotResults } from './types';
 
 /** Tables a vote can land in. Extend when a question type is added. */
-const VOTE_TABLES = ['votes_yes_no', 'votes_highest_outright', 'votes_highest_x'] as const;
+const VOTE_TABLES = [
+  'votes_yes_no', 'votes_highest_outright', 'votes_highest_x', 'votes_recursion_filter',
+  // a round settling or opening moves the count without a vote landing
+  'rounds_recursion_filter',
+] as const;
 
 /** Several votes arrive together when a ballot is submitted; refresh once. */
 const SETTLE_MS = 400;

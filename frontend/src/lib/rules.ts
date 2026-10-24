@@ -15,6 +15,11 @@ export interface YesNoConfig {
 export interface OutrightConfig {
   require_majority: boolean; allow_abstain: boolean; abstain_label: string;
 }
+export interface RecursionConfig {
+  round: number; kind: 'nomination' | 'elimination';
+  pick_min: number; pick_max: number;
+  allow_abstain: boolean; abstain_label: string;
+}
 export interface HighestXConfig {
   select_min: number; select_max: number; winner_count: number;
 }
@@ -48,6 +53,18 @@ export function selectionError(question: LobbyQuestion, chosen: string[]): strin
       return cfg.allow_abstain ? null : 'This question does not allow abstentions.';
     }
     return known.has(answer) ? null : 'That option is not available.';
+  }
+
+  if (question.type === 'recursion_filter') {
+    const cfg = question.config as unknown as RecursionConfig;
+    if (chosen.length === 1 && chosen[0] === 'abstain') {
+      return cfg.allow_abstain ? null : 'This question does not allow abstentions.';
+    }
+    const picked = new Set(chosen.filter((id) => known.has(id)));
+    const min = Math.max(cfg.pick_min, 1);
+    if (picked.size < min) return min === 1 ? 'Choose someone.' : `Choose at least ${min}.`;
+    if (picked.size > cfg.pick_max) return `Choose at most ${cfg.pick_max}.`;
+    return null;
   }
 
   const cfg = question.config as unknown as HighestXConfig;
