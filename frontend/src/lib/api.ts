@@ -603,10 +603,13 @@ export async function deleteOption(type: QuestionType, id: string): Promise<void
 export async function setGate(
   ballotId: string, type: QuestionType, questionId: string, open: boolean, only = false,
 ): Promise<void> {
-  const { error } = await supabase.rpc('set_gate', {
+  const { data, error } = await supabase.rpc('set_gate', {
     p_ballot: ballotId, p_type: type, p_question: questionId, p_open: open, p_only: only,
   });
   if (error) throw new ApiError(error.message);
+  // A refusal comes back as an answer, not an error; it must not pass silently.
+  const answer = data as { ok?: boolean; error?: string } | null;
+  if (answer && answer.ok === false) throw new ApiError(answer.error ?? 'The gate did not move.');
 }
 
 export interface Advanced {

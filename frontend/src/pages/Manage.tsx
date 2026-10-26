@@ -159,6 +159,12 @@ function Live({ ballot, onFinished }: { ballot: Ballot; onFinished: () => void }
     try {
       const answer = await api.advanceBallot(ballot.id);
       if (!answer.ok) setError(answer.error ?? 'That did not work.');
+      else if (answer.action === 'round_closed') {
+        setError('');
+        setNote(answer.round === 0
+          ? `Nominations are closed. Settle them in "${answer.closed?.prompt ?? 'the race'}" below to go on.`
+          : `Round ${answer.round} is closed. Settle it in "${answer.closed?.prompt ?? 'the race'}" below to go on.`);
+      }
       else { setError(''); setNote(answer.message ?? ''); }
       await load();
       if (answer.action === 'finished') onFinished();
@@ -181,7 +187,8 @@ function Live({ ballot, onFinished }: { ballot: Ballot; onFinished: () => void }
       {ballot.mode === 'open'
         ? <Banner kind="info">
             In open mode every enabled question is on the voter's page at once, so the
-            gates below do not apply.
+            gates below do not apply. A narrow-it-down race is the exception: it still
+            runs round by round from its own panel.
           </Banner>
         : null}
 
@@ -232,7 +239,8 @@ function Live({ ballot, onFinished }: { ballot: Ballot; onFinished: () => void }
               required={ballot.require_all_pins}
             />
             <div className="row" style={{ marginTop: 14 }}>
-              {q.gate_open ? (
+              {/* A race opens and closes round by round, from its own panel below. */}
+              {q.type === 'recursion_filter' ? null : q.gate_open ? (
                 <button className="ghost" disabled={busy}
                         onClick={() => void act(() => api.setGate(ballot.id, q.type, q.id, false))}>
                   Close gate
@@ -255,7 +263,7 @@ function Live({ ballot, onFinished }: { ballot: Ballot; onFinished: () => void }
             </div>
 
             {tally?.type === 'recursion_filter' ? (
-              <RecursionControls key={`${q.id}:${tally.tally.current_round}`} questionId={q.id} tally={tally.tally} busy={busy}
+              <RecursionControls key={`${q.id}:${tally.tally.current_round}`} ballotId={ballot.id} questionId={q.id} tally={tally.tally} busy={busy}
                                  act={(fn) => act(fn)} />
             ) : null}
           </Card>

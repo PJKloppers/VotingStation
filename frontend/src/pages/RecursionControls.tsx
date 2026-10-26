@@ -1,10 +1,19 @@
 /**
  * The chair's controls for one recursion filter, on the Live tab.
  *
- * A round runs: open the gate, voters choose, close the gate, settle. Settling
- * is the chair's decision and the only one the database will not make alone --
- * how many drop, and who goes when the cut falls on a tie. Between rounds the
- * chair can also add someone from the pool, withdraw someone, or end it.
+ * A round runs: open the gate, voters choose, close the gate, settle. The
+ * phase bar at the top always shows where the race is and holds the one button
+ * that moves it on, so the chair never has to hunt for the next step:
+ *
+ *   not opened → Open nominations / Open round N
+ *   open       → Close nominations / Close round N
+ *   closed     → Settle (with the drop count, for an elimination round)
+ *   settled    → the next round, not opened yet, and round again
+ *
+ * Settling is the chair's decision and the only one the database will not make
+ * alone -- how many drop, and who goes when the cut falls on a tie. Between
+ * rounds the chair can also add someone from the pool, withdraw someone, or
+ * end it.
  *
  * Every button here is a request. The database checks it again and answers in
  * a sentence when it will not do it, which is shown as it comes.
@@ -16,7 +25,8 @@ import type { RecursionTally } from '../lib/types';
 import { Banner, Field, Pill } from '../components/ui';
 import { RecursionResult } from '../components/RecursionResult';
 
-export function RecursionControls({ questionId, tally, busy, act }: {
+export function RecursionControls({ ballotId, questionId, tally, busy, act }: {
+  ballotId: string;
   questionId: string;
   tally: RecursionTally;
   busy: boolean;
@@ -36,11 +46,14 @@ export function RecursionControls({ questionId, tally, busy, act }: {
   const decided = tally.phase === 'decided';
   const nominating = tally.phase === 'nominating';
   const open = current?.gate_open ?? false;
+  const opened = current?.opened ?? false;
   const inRace = tally.candidates.filter((c) => c.status === 'in');
   const addable = tally.candidates.filter((c) => ['pool', 'dropped', 'withdrawn'].includes(c.status));
   const roundSize = current?.options.length ?? 0;
+  const name = nominating ? 'nominations' : `round ${tally.current_round}`;
+  const Name = nominating ? 'Nominations' : `Round ${tally.current_round}`;
 
-  const [drop, setDrop] = useState<string>(String(current?.drop_count ?? ''));
+  const [drop, setDrop] = useState<string>(current?.drop_count == null ? '' : String(current.drop_count));
 
   /** Calls the database, and says what it answered. */
   const call = (fn: () => Promise<RoundAnswer>, onOk?: (a: RoundAnswer) => void) =>
@@ -58,8 +71,24 @@ export function RecursionControls({ questionId, tally, busy, act }: {
       }
     });
 
+  /** Opens or closes the current round's gate. */
+  const gate = (to: boolean) =>
+    act(async () => {
+      await api.setGate(ballotId, 'recursion_filter', questionId, to);
+      setSaid(to
+        ? { kind: 'good', text: `${Name} ${nominating ? 'are' : 'is'} open. Voters can see it now.` }
+        : { kind: 'info', text: `${Name} ${nominating ? 'are' : 'is'} closed. Settle ${nominating ? 'them' : 'it'} to go on.` });
+    });
+
   const settle = (tieDrop?: string[], list?: string[]) =>
-    call(() => api.settleRound(questionId, tieDrop, list), () => {
+    call(async () => {
+      // The drop count typed in but not yet saved goes with the settle.
+      if (!nominating && drop !== '' && Number(drop) !== current?.drop_count) {
+        const set = await api.setRoundDropCount(questionId, Number(drop));
+        if (!set.ok) return set;
+      }
+      return api.settleRound(questionId, tieDrop, list);
+    }, () => {
       setTie(null); setShortlisting(false); setShortlist([]); setDrop('');
     });
 
@@ -69,26 +98,75 @@ export function RecursionControls({ questionId, tally, busy, act }: {
 
   return (
     <div style={{ marginTop: 14 }}>
-      <RecursionResult tally={tally} chair />
-
-      {said ? <div style={{ marginTop: 12 }}><Banner kind={said.kind}>{said.text}</Banner></div> : null}
+      {/* ---------------------------------------------------- the phase bar */}
+      <Phases tally={tally} />
 
       {decided ? null : (
-        <div className="stack" style={{ marginTop: 16, gap: 14 }}>
-          {/* ------------------------------------------ the round in front of us */}
+        <div className="card" style={{ padding: 14, marginTop: 10 }}>
           <div className="row">
-            <strong className="grow">
-              {nominating ? 'Nominations' : `Round ${tally.current_round}`}
-            </strong>
+            <strong className="grow">{Name}</strong>
             {open ? <Pill tone="open">Voting</Pill>
-              : current?.opened ? <Pill tone="pending">Closed — settle it</Pill>
+              : opened ? <Pill tone="pending">Closed — settle it</Pill>
               : <Pill tone="closed">Not opened yet</Pill>}
           </div>
 
+          {!opened && !open ? (
+            <>
+              <p className="faint" style={{ margin: '6px 0 10px' }}>
+                {nominating
+                  ? 'Open nominations to let voters name people from the pool.'
+                  : `${roundSize} in this round. Open it to let voters choose.`}
+              </p>
+              <div className="row">
+                <button className="primary" disabled={busy} onClick={() => void gate(true)}>
+                  Open {name}
+                </button>
+                {nominating ? (
+                  <button className="ghost" disabled={busy}
+                          onClick={() => { setShortlisting(!shortlisting); setShortlist([]); }}>
+                    {shortlisting ? 'Cancel' : 'Skip: choose the shortlist myself'}
+                  </button>
+                ) : null}
+              </div>
+            </>
+          ) : open ? (
+            <>
+              <p className="faint" style={{ margin: '6px 0 10px' }}>
+                {current?.voters ?? 0} voted so far. Close {name} when the room is done.
+              </p>
+              <button className="primary" disabled={busy} onClick={() => void gate(false)}>
+                Close {name}
+              </button>
+            </>
+          ) : (
+            <>
+              <p className="faint" style={{ margin: '6px 0 10px' }}>
+                {nominating
+                  ? `Settling puts everyone with ${tally.nominate_threshold} or more nomination${tally.nominate_threshold === 1 ? '' : 's'} through to round 1.`
+                  : 'Settling drops the lowest and prepares the next round, or names the winner.'}
+              </p>
+              <div className="row">
+                <button className="primary" disabled={busy}
+                        onClick={() => void settle()}>
+                  Settle {name}
+                </button>
+                {nominating ? (
+                  <button className="ghost" disabled={busy}
+                          onClick={() => { setShortlisting(!shortlisting); setShortlist([]); }}>
+                    {shortlisting ? 'Cancel' : 'Choose the shortlist myself'}
+                  </button>
+                ) : null}
+                <button className="ghost" disabled={busy} onClick={() => void gate(true)}>
+                  Reopen
+                </button>
+              </div>
+            </>
+          )}
+
           {!nominating ? (
-            <div className="row">
+            <div className="row" style={{ marginTop: 12 }}>
               <Field label="How many drop out of this round"
-                     help={`0 to ${Math.max(roundSize - 1, 0)}. You can set it while the round is open.`}>
+                     help={`0 to ${Math.max(roundSize - 1, 0)}. Set it any time before you settle.`}>
                 <input type="number" min={0} max={Math.max(roundSize - 1, 0)} name="drop_count"
                        value={drop} onChange={(e) => setDrop(e.target.value)} style={{ width: 100 }} />
               </Field>
@@ -98,24 +176,13 @@ export function RecursionControls({ questionId, tally, busy, act }: {
               </button>
             </div>
           ) : null}
+        </div>
+      )}
 
-          {!open ? (
-            <div className="row">
-              <button className="primary" disabled={busy}
-                      onClick={() => void settle()}>
-                {nominating ? 'Settle nominations' : `Settle round ${tally.current_round}`}
-              </button>
-              {nominating ? (
-                <button className="ghost" disabled={busy}
-                        onClick={() => { setShortlisting(!shortlisting); setShortlist([]); }}>
-                  {shortlisting ? 'Cancel' : 'Choose the shortlist myself'}
-                </button>
-              ) : null}
-            </div>
-          ) : (
-            <p className="faint">Close the round (the floor button above, or Close gate) to settle it.</p>
-          )}
+      {said ? <div style={{ marginTop: 12 }}><Banner kind={said.kind}>{said.text}</Banner></div> : null}
 
+      {decided ? null : (
+        <div className="stack" style={{ marginTop: 14, gap: 14 }}>
           {/* ---------------------------------------------------- a tie at the cut */}
           {tie ? (
             <div className="card" style={{ padding: 14 }}>
@@ -216,6 +283,37 @@ export function RecursionControls({ questionId, tally, busy, act }: {
           ) : null}
         </div>
       )}
+
+      {/* The count comes after the controls: a pool of thirty-odd names
+          would otherwise push every button off the screen. */}
+      <div style={{ marginTop: 18 }}>
+        <RecursionResult tally={tally} chair />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Where the race is: Nominations, Round 1, Round 2 … with the rounds that are
+ * done ticked and the current one marked. It grows a step each round; there is
+ * never an end shown, because nobody knows where the end is.
+ */
+function Phases({ tally }: { tally: RecursionTally }) {
+  const decided = tally.phase === 'decided';
+  return (
+    <div className="row" style={{ gap: 6, flexWrap: 'wrap' }} aria-label="Stages of the vote">
+      {tally.rounds.map((r) => {
+        const here = !decided && r.round === tally.current_round;
+        const label = r.kind === 'nomination' ? 'Nominations' : `Round ${r.round}`;
+        return (
+          <Pill key={r.round} tone={here ? (r.tally.gate_open ? 'open' : 'accent') : r.settled ? 'carried' : 'closed'}>
+            {r.settled ? '✓ ' : ''}{label}
+          </Pill>
+        );
+      })}
+      {decided
+        ? <Pill tone={tally.winner ? 'carried' : 'defeated'}>{tally.winner ? `Won: ${tally.winner.label}` : 'No winner'}</Pill>
+        : null}
     </div>
   );
 }

@@ -65,6 +65,9 @@ function Round({ round, chair, winner, threshold }: {
 }) {
   const t = round.tally;
   const nomination = round.kind === 'nomination';
+  // A nomination round lists the whole pool; only the named are worth a bar.
+  const rows = nomination ? t.options.filter((o) => o.votes > 0) : t.options;
+  const unnamed = t.options.length - rows.length;
 
   return (
     <section>
@@ -75,7 +78,7 @@ function Round({ round, chair, winner, threshold }: {
           : t.opened ? <Pill tone="pending">To settle</Pill> : null}
       </div>
 
-      {t.options.map((o) => {
+      {rows.map((o) => {
         const out = round.settled && (round.dropped ?? []).some((d) => d.id === o.id);
         const tone = o.id === winner ? 'won'
           : nomination ? (o.qualifies ? '' : 'lost')
@@ -97,6 +100,12 @@ function Round({ round, chair, winner, threshold }: {
           </div>
         );
       })}
+
+      {nomination && unnamed > 0 ? (
+        <p className="faint" style={{ marginTop: 6 }}>
+          {rows.length === 0 ? `Nobody nominated yet out of ${unnamed} in the pool.` : `${unnamed} others in the pool with no nominations.`}
+        </p>
+      ) : null}
 
       <p className="faint" style={{ marginTop: 6 }}>{roundNote(round, threshold)}</p>
 
