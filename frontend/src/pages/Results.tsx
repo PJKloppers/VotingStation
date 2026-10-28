@@ -30,6 +30,21 @@ function Tally({ ballotId }: { ballotId: string }) {
   const [data, setData] = useState<BallotResults | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(true);
+  const [making, setMaking] = useState(false);
+
+  /** The results as a PDF report; the PDF code loads only when asked for. */
+  const pdf = async () => {
+    if (!data) return;
+    setMaking(true);
+    try {
+      const { downloadResultsPdf } = await import('../lib/pdfReport');
+      await downloadResultsPdf(data, api.logoUrl(data.ballot.org_logo_path));
+    } catch (e) {
+      setError(e instanceof Error ? `Could not make the PDF: ${e.message}` : 'Could not make the PDF.');
+    } finally {
+      setMaking(false);
+    }
+  };
 
   const load = useCallback(async () => {
     setBusy(true);
@@ -66,6 +81,9 @@ function Tally({ ballotId }: { ballotId: string }) {
         <div className="row-end">
           <button className="ghost" onClick={() => void load()} disabled={busy}>
             {busy ? 'Refreshing…' : 'Refresh'}
+          </button>
+          <button className="primary" onClick={() => void pdf()} disabled={making}>
+            {making ? 'Making the PDF…' : 'Download PDF'}
           </button>
         </div>
       </div>

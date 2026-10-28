@@ -370,4 +370,44 @@ describe('a committee of ten and a chairperson, side by side', () => {
     expect(a.message).toBe('Xia, Yan elected. Nobody is left for the last 1 seat, so it stays empty.');
     expect((await race(q!.id)).phase).toBe('decided');
   }, 30000);
+
+  test('a decided committee restarts from round 1, keeping its nominations', async () => {
+    const { error } = await anonClient().rpc('reset_race', { p_question: committee, p_scope: 'rounds' });
+    expect(error?.message ?? '').toMatch(/permission denied|not find/i);
+    const { error: e2 } = await stranger.rpc('reset_race', { p_question: committee, p_scope: 'rounds' });
+    expect(e2?.message ?? '').toContain('Not your ballot');
+
+    const a = await rpc(organizer, 'reset_race', { p_question: committee, p_scope: 'rounds' });
+    expect(a.message).toBe('"Committee" is back at round 1, with the 18 on the shortlist from nominations. Open round 1 when the room is ready.');
+    const r = await race(committee);
+    expect([r.phase, r.current_round, r.winner_id]).toEqual(['eliminating', 1, null]);
+    expect(await seated(committee)).toEqual([]);
+    const { data: rounds } = await organizer.from('rounds_recursion_filter')
+      .select('round_no, settled_at').eq('question_id', committee).order('round_no');
+    expect(rounds!.map((x) => [x.round_no, x.settled_at !== null])).toEqual([[0, true], [1, false]]);
+    const { count: kept } = await organizer.from('votes_recursion_filter')
+      .select('id', { count: 'exact', head: true }).eq('question_id', committee).eq('valid', true);
+    const { count: noms } = await organizer.from('votes_recursion_filter')
+      .select('id', { count: 'exact', head: true }).eq('question_id', committee).eq('valid', true).eq('round_no', 0);
+    expect(kept).toBe(noms);                                     // only the nominations still count
+
+    // round 1 opens and takes votes again
+    await gate(committee, true);
+    await roomVotes(committee, ballotsFor({ P01: 25, P02: 5 }, 10));
+    expect(await counts(committee)).toEqual({ P01: 25, P02: 5 });
+    await gate(committee, false);
+  }, 60000);
+
+  test('and resets its nominations, back to the very start', async () => {
+    const a = await rpc(organizer, 'reset_race', { p_question: committee, p_scope: 'nominations' });
+    expect(a.message).toBe('"Committee" is back at the start: nominations are not yet open.');
+    const r = await race(committee);
+    expect([r.phase, r.current_round]).toEqual(['nominating', 0]);
+    const { count } = await organizer.from('votes_recursion_filter')
+      .select('id', { count: 'exact', head: true }).eq('question_id', committee).eq('valid', true);
+    expect(count).toBe(0);
+    const { data: statuses } = await organizer.from('options_recursion_filter')
+      .select('status').eq('question_id', committee);
+    expect([...new Set(statuses!.map((o) => o.status))]).toEqual(['pool']);
+  }, 30000);
 });

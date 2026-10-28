@@ -662,6 +662,13 @@ export const settleRound = (
     p_seat_tie: seatTie ?? null,
   });
 
+/**
+ * Starts a race again: 'rounds' goes back to round 1 and keeps the
+ * nominations; 'nominations' goes back to the very start.
+ */
+export const resetRace = (questionId: string, scope: 'rounds' | 'nominations') =>
+  roundCall('reset_race', { p_question: questionId, p_scope: scope });
+
 /** The chair's answer to "how many seats are being filled?", before round 1 opens. */
 export const setRaceSeats = (questionId: string, seats: number) =>
   roundCall('set_race_seats', { p_question: questionId, p_seats: seats });

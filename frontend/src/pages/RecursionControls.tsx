@@ -189,6 +189,9 @@ export function RecursionControls({ ballotId, questionId, tally, busy, act }: {
         <More tally={tally} questionId={questionId} busy={busy} call={call} />
       )}
 
+      <Reset tally={tally} busy={busy}
+             onReset={(scope) => call(() => api.resetRace(questionId, scope))} />
+
       {early ? (
         <CloseEarly turnout={early} what={name} busy={busy}
                     onKeep={() => setEarly(null)}
@@ -604,6 +607,76 @@ function More({ tally, questionId, busy, call }: {
           )
         ) : null}
       </div>
+    </details>
+  );
+}
+
+/* ---------------------------------------------------------------- reset */
+
+/**
+ * Starting a race again, two ways: back to round 1 with the nominations
+ * kept, or back to the very start. Folded away, and each asks before it acts,
+ * since the votes it voids cannot be brought back.
+ */
+function Reset({ tally, busy, onReset }: {
+  tally: RecursionTally;
+  busy: boolean;
+  onReset: (scope: 'rounds' | 'nominations') => Promise<void>;
+}) {
+  const [asking, setAsking] = useState<'rounds' | 'nominations' | null>(null);
+  const nominationsDone = tally.rounds[0]?.settled ?? false;
+  const shortlist = tally.rounds[0]?.shortlisted?.length ?? 0;
+  const anything = nominationsDone || (tally.rounds[0]?.tally.opened ?? false);
+
+  return (
+    <details className="more-controls" style={{ marginTop: 12 }}>
+      <summary>Reset this vote</summary>
+      <div className="stack" style={{ gap: 10, marginTop: 12 }}>
+        <div className="row">
+          <div className="grow">
+            <strong>Reset rounds</strong>
+            <p className="faint" style={{ margin: 0 }}>
+              Back to round 1. The nominations stand{nominationsDone ? ` (${shortlist} on the shortlist)` : ''};
+              every round after them is undone and its votes voided.
+            </p>
+          </div>
+          <button className="ghost" disabled={busy || !nominationsDone} onClick={() => setAsking('rounds')}>
+            Reset rounds
+          </button>
+        </div>
+        <div className="row">
+          <div className="grow">
+            <strong>Reset nominations</strong>
+            <p className="faint" style={{ margin: 0 }}>
+              Back to the very start: nominations not yet open, everyone in the pool, every vote voided.
+            </p>
+          </div>
+          <button className="danger" disabled={busy || !anything} onClick={() => setAsking('nominations')}>
+            Reset nominations
+          </button>
+        </div>
+      </div>
+
+      {asking ? (
+        <Modal open title={asking === 'rounds' ? 'Reset the rounds?' : 'Reset the nominations?'}
+               onClose={() => setAsking(null)}>
+          <div className="stack" style={{ gap: 14 }}>
+            <p style={{ margin: 0 }}>
+              {asking === 'rounds'
+                ? `The race goes back to round 1 with the ${shortlist} on the shortlist. Every vote cast after nominations is voided, and anyone elected or dropped is back in the race.`
+                : 'The race goes back to the start. Every nomination and every vote in this race is voided, and everyone goes back to the pool.'}
+            </p>
+            <p className="faint" style={{ margin: 0 }}>Voided votes cannot be brought back.</p>
+            <div className="row">
+              <button className="primary" onClick={() => setAsking(null)}>Keep it as it is</button>
+              <button className="danger" disabled={busy}
+                      onClick={() => { const s = asking; setAsking(null); void onReset(s); }}>
+                {asking === 'rounds' ? 'Reset rounds' : 'Reset nominations'}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      ) : null}
     </details>
   );
 }

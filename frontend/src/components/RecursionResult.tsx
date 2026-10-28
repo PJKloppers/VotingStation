@@ -164,7 +164,7 @@ function Round({ round, chair, winner, threshold, seats, startOpen }: {
   );
 }
 
-function roundNote(r: RecursionRound, threshold: number): string {
+export function roundNote(r: RecursionRound, threshold: number): string {
   const t = r.tally;
   const parts = [`${t.voters} voted`];
   if (t.abstain > 0) parts.push(`${t.abstain} abstained`);
