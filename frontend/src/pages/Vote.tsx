@@ -541,6 +541,8 @@ function Choices({ question, chosen, onChange }: {
         <p className="faint">
           {cfg.kind === 'nomination'
             ? `Nominate ${cfg.pick_max === 1 ? 'one person' : `up to ${cfg.pick_max} people`}.`
+            : (cfg.seats ?? 1) > 1
+              ? `${cfg.seats_open} seat${cfg.seats_open === 1 ? '' : 's'} open · choose up to ${cfg.pick_max}.`
             : min === cfg.pick_max
               ? `Choose ${min === 1 ? 'one' : `exactly ${min}`}.`
               : `Choose ${min} to ${cfg.pick_max}.`}

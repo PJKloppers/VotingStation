@@ -443,14 +443,58 @@ async function chairSees(prompt: string, text: string, timeout = 20000) {
   });
 }
 
-async function typeDrop(prompt: string, n: number) {
+/**
+ * Settles a round through the chair's dialog: answers "how do people drop
+ * out?", checks what the preview says, breaks any tie, and settles.
+ */
+async function settleWith(
+  prompt: string, round: number, rule: 'votes' | 'count' | 'none' | null, n: number | null,
+  opts: { expect?: string[]; cutTie?: string[]; seatTie?: string[] } = {},
+) {
+  await press(prompt, `Settle round ${round}…`, true);
+  const dialog = (await chair.waitForSelector('dialog[open]', { timeout: 10000 }))!;
+  await pause(600, 1500);                                    // the chair reads the counts
+  if (rule === 'none') {
+    await (await dialog.$('input[name="drop_rule"][value="none"]'))!.click();
+  } else if (rule) {
+    const input = (await dialog.$(`input[name="drop_${rule === 'votes' ? 'votes' : 'count'}"]`))!;
+    await input.click();
+    await input.evaluate((e) => { (e as HTMLInputElement).select(); });
+    await input.type(String(n), { delay: between(80, 200) });
+  }
+  note(`chair answers ${rule ?? '(nothing to ask)'} ${n ?? ''} on ${prompt} round ${round}`);
+  for (const text of opts.expect ?? []) {
+    await chair.waitForFunction((t: string) =>
+      (document.querySelector('dialog[open]') as HTMLElement | null)?.innerText.toLowerCase().includes(t.toLowerCase()) ?? false,
+    { timeout: 10000, polling: 200 }, text).catch(async () => {
+      const shown = await chair.evaluate(() => (document.querySelector('dialog[open]') as HTMLElement | null)?.innerText ?? '(no dialog)');
+      throw new Error(`The settle dialog never showed "${text}". It reads:\n${shown}`);
+    });
+  }
+  for (const [name, who] of [['cut_tie', opts.cutTie], ['seat_tie', opts.seatTie]] as const) {
+    for (const label of who ?? []) {
+      const boxes = await dialog.$$(`label.check:has(input[name="${name}"])`);
+      for (const b of boxes) {
+        if ((await b.evaluate((e) => (e as HTMLElement).innerText.trim())) === label) await b.click();
+      }
+      await pause(300, 800);
+    }
+  }
+  const settle = await chair.waitForFunction((r: number) =>
+    [...document.querySelectorAll('dialog[open] button')].find((b) =>
+      (b as HTMLElement).innerText.trim() === `Settle round ${r}` && !(b as HTMLButtonElement).disabled) ?? false,
+  { timeout: 10000, polling: 200 }, round);
+  await (settle.asElement() as ElementHandle<Element>).click();
+  await chair.waitForFunction(() => !document.querySelector('dialog[open]'), { timeout: 15000 });
+  note(`chair settles ${prompt} round ${round}`);
+}
+
+/** Unfolds "More controls" on a race's card. */
+async function openMore(prompt: string) {
   const card = await raceCard(prompt);
-  const input = await card.waitForSelector('input[name="drop_count"]', { timeout: 15000 });
-  await input!.click();
-  await input!.evaluate((e) => { (e as HTMLInputElement).select(); });
-  await pause(200, 600);
-  await input!.type(String(n), { delay: between(80, 200) });
-  note(`chair types drop count ${n} on ${prompt}`);
+  const open = await card.$eval('details.more-controls', (d) => (d as HTMLDetailsElement).open);
+  if (!open) await (await card.$('details.more-controls > summary'))!.click();
+  await pause(300, 700);
 }
 
 const refreshChair = async () => {
@@ -590,27 +634,14 @@ describe('two recursion filters, one room, run to a winner each', () => {
       { [GAIL]: 4, [HUGO]: 3, [IVY]: 2, [JON]: 1, [ANNA]: 1, [FINN]: 1 });
   }, 150000);
 
-  test('Chairperson round 1: the drop count shows a tie at the cut, and the chair breaks it', async () => {
-    // Set while the round is still open: the chair sees the projection first.
-    await typeDrop(CHAIR, 1);
-    await press(CHAIR, 'Set', true);
-    await refreshChair();
-    await chairSees(CHAIR, `${DAN} — tied at the cut`);
-    await chairSees(CHAIR, `${EVE} — tied at the cut`);
-
+  test('Chairperson round 1: the dialog shows a tie at the cut, and the chair breaks it', async () => {
     await press(CHAIR, 'Close round 1');
     await chairSees(CHAIR, 'Closed — settle it');
-    await press(CHAIR, 'Settle round 1');
-    await chairSees(CHAIR, 'Choose 1 to drop');
-
-    // The tie-break: tick Eve, then drop.
-    await pause(800, 2000);
-    const card = await raceCard(CHAIR);
-    const boxes = await card.$$('label.check');
-    for (const b of boxes) {
-      if ((await b.evaluate((e) => (e as HTMLElement).innerText.trim())) === EVE) await b.click();
-    }
-    await press(CHAIR, 'Drop them and settle');
+    // asked how people drop out: the lowest 1, which falls on Dan and Eve
+    await settleWith(CHAIR, 1, 'count', 1, {
+      expect: [`${DAN} — tied at the cut`, `${EVE} — tied at the cut`, 'Choose 1 to drop'],
+      cutTie: [EVE],
+    });
     await chairSees(CHAIR, 'Open round 2');
 
     const s = await standing(CHAIR);
@@ -619,6 +650,7 @@ describe('two recursion filters, one room, run to a winner each', () => {
   }, 90000);
 
   test('between rounds the chair adds Gail from the pool; she is on round 2', async () => {
+    await openMore(CHAIR);
     const card = await raceCard(CHAIR);
     const select = await card.$('select[name="add_candidate"]');
     await select!.select(opt[CHAIR]![GAIL]!);
@@ -638,11 +670,11 @@ describe('two recursion filters, one room, run to a winner each', () => {
   test('Financial assistant round 1 drops three; the chair withdraws Ivy before round 2', async () => {
     await press(FIN, 'Close round 1');
     await chairSees(FIN, 'Closed — settle it');
-    await typeDrop(FIN, 3);
-    await press(FIN, 'Settle round 1');                       // the typed count goes with it
+    await settleWith(FIN, 1, 'count', 3, { expect: ['3 drop · 3 stay for 1 seat'] });
     await chairSees(FIN, 'Open round 2');
     expect((await standing(FIN)).dropped).toEqual([JON, ANNA, FINN].sort());
 
+    await openMore(FIN);
     await chairSees(FIN, IVY);
     const card = await raceCard(FIN);
     const rows = await card.$$('.row');
@@ -677,8 +709,7 @@ describe('two recursion filters, one room, run to a winner each', () => {
   test('Chairperson round 2 drops two; Financial assistant round 2 opens alongside round 3', async () => {
     await press(CHAIR, 'Close round 2');
     await chairSees(CHAIR, 'Closed — settle it');
-    await typeDrop(CHAIR, 2);
-    await press(CHAIR, 'Settle round 2');
+    await settleWith(CHAIR, 2, 'count', 2, { expect: [`${CARA} — drops`, `${DAN} — drops`] });
     await chairSees(CHAIR, 'Open round 3');
     expect((await standing(CHAIR)).in).toEqual([ANNA, BEN, GAIL].sort());
 
@@ -704,7 +735,8 @@ describe('two recursion filters, one room, run to a winner each', () => {
   test('Chairperson: Anna has 7 of 12, so settling ends it with her as winner', async () => {
     await press(CHAIR, 'Close round 3');
     await chairSees(CHAIR, 'Closed — settle it');
-    await press(CHAIR, 'Settle round 3');                     // no drop count: the majority decides
+    // nothing to ask: the majority decides it
+    await settleWith(CHAIR, 3, null, null, { expect: ['This round decides the winner', `${ANNA} — elected`] });
     await chairSees(CHAIR, `Won: ${ANNA}`);
 
     const r = await race(CHAIR);
@@ -716,8 +748,7 @@ describe('two recursion filters, one room, run to a winner each', () => {
   test('Financial assistant round 2 is a dead heat; a drop of 0 sends the same two again', async () => {
     await press(FIN, 'Close round 2');
     await chairSees(FIN, 'Closed — settle it');
-    await typeDrop(FIN, 0);
-    await press(FIN, 'Settle round 2');
+    await settleWith(FIN, 2, 'none', null, { expect: ['0 drop · 2 stay for 1 seat'] });
     await chairSees(FIN, 'Open round 3');
     expect((await standing(FIN)).in).toEqual([GAIL, HUGO].sort());
     expect((await race(FIN)).current_round).toBe(3);
@@ -734,8 +765,11 @@ describe('two recursion filters, one room, run to a winner each', () => {
 
     await press(FIN, 'Close round 3');
     await chairSees(FIN, 'Closed — settle it');
-    await typeDrop(FIN, 1);
-    await press(FIN, 'Settle round 3');
+    // a rule that would leave nobody is refused before it is sent
+    await settleWith(FIN, 3, 'votes', 7, { expect: ['leaves 0 for 1 seat'] }).catch(() => undefined);
+    await chair.keyboard.press('Escape');
+    await chair.waitForFunction(() => !document.querySelector('dialog[open]'), { timeout: 10000 });
+    await settleWith(FIN, 3, 'votes', 5, { expect: [`${HUGO} — drops`, '1 drop · 1 stay for 1 seat'] });
     await chairSees(FIN, `Won: ${GAIL}`);
 
     const r = await race(FIN);
@@ -748,6 +782,7 @@ describe('two recursion filters, one room, run to a winner each', () => {
     const chairText = await raceText(CHAIR);
     const finText = await raceText(FIN);
     expect(chairText.toLowerCase()).toContain(`won: ${ANNA}`.toLowerCase());
+    expect(finText).toContain('everyone on 5 votes or fewer dropped');
     expect(finText.toLowerCase()).toContain(`won: ${GAIL}`.toLowerCase());
     // The stages each race went through, as the chair sees them.
     expect(chairText).toMatch(/✓ Nominations[\s\S]*✓ Round 1[\s\S]*✓ Round 2[\s\S]*✓ Round 3/i);

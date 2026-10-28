@@ -12,7 +12,7 @@ import type {
   Accepted, Ballot, BallotResults, HighestOutrightQuestion, HighestXQuestion,
   RecursionFilterQuestion,
   Organization, OrganizationImage, OptionPool, OptionPoolEntry, OrgPage,
-  QuestionOption, QuestionType,
+  QuestionOption, QuestionType, DropRule,
   Refused, TokenReport, VoterState, YesNoQuestion,
 } from './types';
 
@@ -640,10 +640,11 @@ export interface RoundAnswer {
   ok: boolean;
   error?: string;
   message?: string;
-  needs?: 'tie_break' | 'drop_count' | 'shortlist';
-  /** On a tie at the cut: who is tied, and how many of them must go. */
+  needs?: 'tie_break' | 'drop_count' | 'drop_rule' | 'shortlist' | 'seat_tie';
+  /** On a tie at the cut or on the last seat: who is tied, and how many. */
   tied?: Array<{ id: string; label: string }>;
   drop_from_tie?: number;
+  elect_from_tie?: number;
   action?: 'shortlisted' | 'next_round' | 'decided';
   joins_round?: number;
 }
@@ -653,10 +654,17 @@ async function roundCall(fn: string, args: Record<string, unknown>): Promise<Rou
   return unwrap(data, error) as RoundAnswer;
 }
 
-export const settleRound = (questionId: string, tieDrop?: string[], shortlist?: string[]) =>
+export const settleRound = (
+  questionId: string, tieDrop?: string[], shortlist?: string[], seatTie?: string[],
+) =>
   roundCall('settle_round', {
     p_question: questionId, p_tie_drop: tieDrop ?? null, p_shortlist: shortlist ?? null,
+    p_seat_tie: seatTie ?? null,
   });
+
+/** How people drop out of the round under way: the lowest N, X votes or fewer, or nobody. */
+export const setRoundDrop = (questionId: string, rule: DropRule, n: number | null) =>
+  roundCall('set_round_drop', { p_question: questionId, p_rule: rule, p_n: rule === 'none' ? null : n });
 
 export const setRoundDropCount = (questionId: string, drop: number) =>
   roundCall('set_round_drop_count', { p_question: questionId, p_drop: drop });
@@ -672,6 +680,10 @@ export const withdrawCandidate = (questionId: string, optionId: string) =>
 
 export const endRecursion = (questionId: string, winnerId: string | null) =>
   roundCall('end_recursion', { p_question: questionId, p_winner: winnerId });
+
+/** Ends a race, giving the seats left to the people named (none: leave them empty). */
+export const endRecursionSeats = (questionId: string, elect: string[]) =>
+  roundCall('end_recursion_seats', { p_question: questionId, p_elect: elect });
 
 export async function closeAllGates(ballotId: string): Promise<void> {
   const { error } = await supabase.rpc('close_all_gates', { p_ballot: ballotId });

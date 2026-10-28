@@ -102,6 +102,30 @@ async function race() {
 /** A tab in the background stalls on clicks; whoever acts comes to the front. */
 const act = (page: Page) => page.bringToFront();
 
+/**
+ * Settling through the chair's dialog: "the lowest N" drop, then Settle.
+ * The dialog asks every round; nothing settles without an answer.
+ */
+async function settleLowest(round: number, n: number) {
+  await act(chair).then(() => clickWithin(chair, PANEL, 'Closed', 'button', `Settle round ${round}`));
+  const dialog = (await chair.waitForSelector('dialog[open]', { timeout: 10000 }))!;
+  const input = (await dialog.$('input[name="drop_count"]'))!;
+  await input.click();
+  // the dialog prefills last round's answer; replace it
+  await input.evaluate((e) => { (e as HTMLInputElement).select(); });
+  await input.type(String(n));
+  await chair.waitForFunction((r: number) =>
+    [...document.querySelectorAll('dialog[open] button')].some((b) =>
+      (b as HTMLElement).innerText.trim() === `Settle round ${r}` && !(b as HTMLButtonElement).disabled),
+  { timeout: 10000 }, round);
+  await chair.evaluate((r: number) => {
+    const b = [...document.querySelectorAll('dialog[open] button')].find((x) =>
+      (x as HTMLElement).innerText.trim() === `Settle round ${r}`);
+    (b as HTMLButtonElement).click();
+  }, round);
+  await chair.waitForFunction(() => !document.querySelector('dialog[open]'), { timeout: 15000 });
+}
+
 /** The names the voter can tap right now, once there are some. */
 async function choices(page: Page): Promise<string[]> {
   await page.waitForSelector('.choice', { timeout: 25000 });
@@ -189,13 +213,10 @@ describe('a recursion filter, from the chair\'s panel', () => {
     await castFor(pins[2]!, ['Ben Cele']);
   }, 60000);
 
-  test('the chair sets two to drop, closes and settles round 1', async () => {
-    await chair.reload({ waitUntil: 'networkidle0' });
-    await chair.waitForSelector('input[name="drop_count"]', { timeout: 15000 });
-    await act(chair); await chair.type('input[name="drop_count"]', '2');
+  test('the chair closes round 1, and settles it with the lowest two dropping', async () => {
     await act(chair).then(() => clickWithin(chair, PANEL, 'Round 1', 'button', 'Close round 1'));
     await waitForText(chair, 'Closed — settle it');
-    await act(chair).then(() => clickWithin(chair, PANEL, 'Closed', 'button', 'Settle round 1'));
+    await settleLowest(1, 2);
 
     await waitForText(chair, 'Open round 2');
     await waitForText(chair, '2 in this round');
@@ -212,12 +233,9 @@ describe('a recursion filter, from the chair\'s panel', () => {
     await castFor(pins[1]!, ['Anna Botha']);
     await castFor(pins[2]!, ['Ben Cele']);
 
-    await chair.reload({ waitUntil: 'networkidle0' });
-    await chair.waitForSelector('input[name="drop_count"]', { timeout: 15000 });
-    await act(chair); await chair.type('input[name="drop_count"]', '1');
     await act(chair).then(() => clickWithin(chair, PANEL, 'Round 2', 'button', 'Close round 2'));
     await waitForText(chair, 'Closed — settle it');
-    await act(chair).then(() => clickWithin(chair, PANEL, 'Closed', 'button', 'Settle round 2'));
+    await settleLowest(2, 1);
 
     await waitForText(chair, 'Won: Anna Botha');
     const r = await race();

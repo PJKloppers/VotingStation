@@ -144,6 +144,8 @@ export interface RecursionFilterQuestion extends QuestionCommon {
   stop_on_majority: boolean;
   allow_abstain: boolean;
   abstain_label: string;
+  /** 1 is a single winner (a chairperson); more is a committee. */
+  seats: number;
   current_round: number;
   phase: 'nominating' | 'eliminating' | 'decided';
   winner_id: string | null;
@@ -292,25 +294,53 @@ export interface RecursionRoundTally {
   pick_min: number;
   pick_max: number;
   threshold: number | null;
+  /** Seats in the question, and seats still open in this round. */
+  seats?: number;
+  seats_open?: number;
+  drop_rule?: DropRule | null;
   drop_count: number | null;
+  drop_votes?: number | null;
   stop_on_majority: boolean;
   majority: string | null;
+  /** Who settling now would elect, and any tie on the last seat. */
+  elect?: string[];
+  seat_tied?: string[];
+  seat_tie_count?: number;
+  /** True when this round fills the seats whatever the drop rule says. */
+  fills?: boolean;
+  seats_after?: number;
+  left_after?: number | null;
+  /** Why the drop rule as set cannot be used. */
+  drop_error?: string | null;
   drop: string[];
   tied: string[];
   tie_drop_count: number;
-  options: Array<{
-    id: string; label: string; description: string;
-    votes: number; share: number;
-    qualifies: boolean; drops: boolean; tied: boolean;
-  }>;
+  options: RoundOption[];
 }
+
+export interface RoundOption {
+  id: string; label: string; description: string;
+  votes: number; share: number;
+  qualifies: boolean; drops: boolean; tied: boolean;
+  majority?: boolean; elected?: boolean; seat_tied?: boolean;
+}
+
+/** How people drop out of a round: the lowest N, X votes or fewer, or nobody. */
+export type DropRule = 'count' | 'votes' | 'none';
 
 export interface RecursionRound {
   round: number;
   kind: 'nomination' | 'elimination';
   settled: boolean;
   drop_count: number | null;
+  drop_rule?: DropRule | null;
+  drop_votes?: number | null;
+  seats_open?: number;
   tally: RecursionRoundTally;
+  elected?: Array<{ id: string; label: string; seat: number }>;
+  drop_n?: number | null;
+  seat_tie_broken_by_chair?: boolean;
+  seats_left?: number;
   dropped?: Array<{ id: string; label: string }>;
   withdrawn?: Array<{ id: string; label: string }>;
   shortlisted?: Array<{ id: string; label: string }>;
@@ -321,7 +351,7 @@ export interface RecursionRound {
   winner?: string | null;
 }
 
-export type CandidateStatus = 'pool' | 'in' | 'dropped' | 'withdrawn' | 'winner';
+export type CandidateStatus = 'pool' | 'in' | 'dropped' | 'withdrawn' | 'winner' | 'elected';
 
 export interface RecursionCandidate {
   id: string;
@@ -331,6 +361,8 @@ export interface RecursionCandidate {
   joined_round: number | null;
   dropped_round: number | null;
   added_by_chair: boolean;
+  elected_round?: number | null;
+  seat_no?: number | null;
 }
 
 export interface RecursionTally {
@@ -338,7 +370,11 @@ export interface RecursionTally {
   current_round: number;
   stop_on_majority: boolean;
   nominate_threshold: number;
+  /** Absent on a database that predates seats: read as 1. */
+  seats?: number;
   winner: { id: string; label: string } | null;
+  /** Everyone holding a seat, in seat order. */
+  elected?: Array<{ id: string; label: string; round: number | null; seat: number | null }>;
   candidates: RecursionCandidate[];
   rounds: RecursionRound[];
 }

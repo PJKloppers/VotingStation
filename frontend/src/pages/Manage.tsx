@@ -384,6 +384,14 @@ function leadLine(result: QuestionResult | undefined): string {
   }
   if (result.type === 'recursion_filter') {
     const t = result.tally;
+    const seats = t.seats ?? 1;
+    if (seats > 1) {
+      const filled = t.elected?.length ?? 0;
+      if (t.phase === 'decided') return `Decided: ${filled} of ${seats} seats filled`;
+      return t.phase === 'nominating'
+        ? `Nominations for ${seats} seats · ${result.voted} voted`
+        : `Round ${t.current_round} · ${filled} of ${seats} seats filled · ${result.voted} voted`;
+    }
     if (t.winner) return `Decided: ${t.winner.label}`;
     if (t.phase === 'decided') return 'Ended with no winner';
     const still = t.candidates.filter((c) => c.status === 'in').length;

@@ -1100,3 +1100,22 @@ button.share-copy[data-state="copied"]:hover {
   background: var(--surface);
   border-top: 1px solid var(--rule-soft);
 }
+
+/* ------------------------------------------- a race's folded-away controls */
+.more-controls {
+  border-top: 1px solid var(--rule-soft);
+  padding-top: 10px;
+}
+.more-controls > summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--ink-soft);
+  list-style: revert;
+}
+.more-controls[open] > summary { color: var(--ink); }
+
+.error-text { color: var(--defeated); font-weight: 600; }
+
+/* a committee, in seat order */
+ol.committee { margin: 0; padding-left: 1.4em; }
+ol.committee li { margin: 2px 0; }
