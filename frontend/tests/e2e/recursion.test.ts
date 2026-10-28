@@ -178,9 +178,23 @@ describe('a recursion filter, from the chair\'s panel', () => {
     await act(phone).then(() => clickWithin(phone, '.card', 'Choose the secretary', 'button', 'Submit my vote'));
     await waitForText(phone, 'already voted on this question');
 
+
+    // the chair tries to close with two PINs still to vote: asked first
+    await act(chair).then(() => clickWithin(chair, PANEL, 'voted so far', 'button', 'Close nominations'));
+    await chair.waitForSelector('dialog[open]', { timeout: 10000 });
+    const asked = await chair.evaluate(() => (document.querySelector('dialog[open]') as HTMLElement).innerText);
+    expect(asked).toContain('1 of 3 PINs have voted in nominations');
+    expect(asked).toContain('2 have not voted yet');
+    await chair.evaluate(() => {
+      const b = [...document.querySelectorAll('dialog[open] button')].find((x) => (x as HTMLElement).innerText.trim() === 'Keep it open');
+      (b as HTMLButtonElement).click();
+    });
+    await chair.waitForFunction(() => !document.querySelector('dialog[open]'), { timeout: 10000 });
+    expect((await race()).gate_open).toBe(true);
+
     await castFor(pins[1]!, ['Anna Botha', 'Cara Dlamini']);
     await castFor(pins[2]!, ['Ben Cele', 'Dan Els']);
-  }, 30000);
+  }, 60000);
 
   test('the chair closes nominations from the panel', async () => {
     await waitForText(chair, '3 voted so far', 20000);

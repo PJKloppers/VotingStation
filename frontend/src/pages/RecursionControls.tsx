@@ -44,6 +44,8 @@ export function RecursionControls({ ballotId, questionId, tally, busy, act }: {
   const [said, setSaid] = useState<Said>(null);
   const [settling, setSettling] = useState(false);
   const [changingSeats, setChangingSeats] = useState(false);
+  // closing a round before everyone has voted is asked about first
+  const [early, setEarly] = useState<Turnout | null>(null);
 
   const seats = tally.seats ?? 1;
   const committee = seats > 1;
@@ -76,6 +78,18 @@ export function RecursionControls({ ballotId, questionId, tally, busy, act }: {
         setSaid({ kind: 'error', text: answer.error ?? 'That did not work.' });
       }
     });
+
+  /** Close, unless PINs are still to vote: then ask first, with today's count. */
+  const askClose = () => act(async () => {
+    const t = await turnoutNow(ballotId, questionId);
+    if (t && t.expected > 0 && t.voted < t.expected) setEarly(t);
+    else await closeNow();
+  });
+
+  const closeNow = async () => {
+    await api.setGate(ballotId, 'recursion_filter', questionId, false);
+    setSaid({ kind: 'info', text: `${Name} ${nominating ? 'are' : 'is'} closed. Settle ${nominating ? 'them' : 'it'} to go on.` });
+  };
 
   /** Opens or closes the current round's gate. */
   const gate = (to: boolean) =>
@@ -149,7 +163,7 @@ export function RecursionControls({ ballotId, questionId, tally, busy, act }: {
               Open {name}
             </button>
           ) : open ? (
-            <button className="primary" disabled={busy} onClick={() => void gate(false)}>
+            <button className="primary" disabled={busy} onClick={() => void askClose()}>
               Close {name}
             </button>
           ) : (
@@ -175,6 +189,12 @@ export function RecursionControls({ ballotId, questionId, tally, busy, act }: {
         <More tally={tally} questionId={questionId} busy={busy} call={call} />
       )}
 
+      {early ? (
+        <CloseEarly turnout={early} what={name} busy={busy}
+                    onKeep={() => setEarly(null)}
+                    onClose={() => void act(async () => { setEarly(null); await closeNow(); })} />
+      ) : null}
+
       {settling && current ? (
         <SettleDialog
           key={tally.current_round}
@@ -193,6 +213,53 @@ export function RecursionControls({ ballotId, questionId, tally, busy, act }: {
         <RecursionResult tally={tally} chair />
       </div>
     </div>
+  );
+}
+
+/* ------------------------------------------------ closing before everyone */
+
+export interface Turnout { voted: number; expected: number }
+
+/** How many PINs have voted on a question right now, read fresh. */
+export async function turnoutNow(ballotId: string, questionId: string): Promise<Turnout | null> {
+  const r = await api.ballotResults(ballotId);
+  if (!r.ok) return null;
+  const q = r.questions.find((x) => x.id === questionId);
+  return q ? { voted: q.voted, expected: q.expected } : null;
+}
+
+/**
+ * "Not everyone has voted yet": asked when the chair closes a round with PINs
+ * still to vote. Keeping it open is the first choice, since closing cannot be
+ * taken back once the round is settled.
+ */
+export function CloseEarly({ turnout, what, busy, onKeep, onClose }: {
+  turnout: Turnout;
+  /** "round 2" or "nominations" */
+  what: string;
+  busy: boolean;
+  onKeep: () => void;
+  onClose: () => void;
+}) {
+  const missing = turnout.expected - turnout.voted;
+  return (
+    <Modal open title="Not everyone has voted" onClose={onKeep}>
+      <div className="stack" style={{ gap: 14 }}>
+        <p style={{ margin: 0 }}>
+          <strong>{turnout.voted} of {turnout.expected} PINs</strong> have voted in {what}.{' '}
+          {missing} {missing === 1 ? 'has' : 'have'} not voted yet.
+        </p>
+        <p className="faint" style={{ margin: 0 }}>
+          Once {what} {what === 'nominations' ? 'are' : 'is'} closed, nobody else can vote in {what === 'nominations' ? 'them' : 'it'}.
+        </p>
+        <div className="row">
+          <button className="primary" onClick={onKeep}>Keep it open</button>
+          <button className="danger" disabled={busy} onClick={onClose}>
+            Close {what} anyway
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 

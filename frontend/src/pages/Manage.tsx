@@ -14,7 +14,7 @@ import { AdminLinks } from './Admin';
 import { Questions } from './Questions';
 import { Results } from './Results';
 import { Tokens } from './Tokens';
-import { RecursionControls } from './RecursionControls';
+import { CloseEarly, RecursionControls, turnoutNow, type Turnout } from './RecursionControls';
 
 const TABS = ['Live', 'Questions', 'PINs', 'Settings', 'Results', 'Links'] as const;
 type Tab = (typeof TABS)[number];
@@ -121,6 +121,7 @@ function Live({ ballot, onFinished }: { ballot: Ballot; onFinished: () => void }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
+  const [early, setEarly] = useState<(Turnout & { what: string }) | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -154,12 +155,21 @@ function Live({ ballot, onFinished }: { ballot: Ballot; onFinished: () => void }
   if (questions === null) return <Spinner label="Reading the ballot" />;
   const enabled = questions.filter((q) => q.enabled);
 
-  const step = async () => {
+  const step = async (sure = false) => {
     // round 1 of a race waits for the seats: the floor button does not skip that
     const waiting = raceUnderWay(enabled, results);
     if (waiting?.needsSeats) {
       setNote(`Confirm how many seats "${waiting.q.prompt}" fills, in its panel below, before round 1.`);
       return;
+    }
+    // closing a race's round with PINs still to vote is asked about first
+    const open = enabled.find((q) => q.gate_open);
+    if (!sure && open?.type === 'recursion_filter') {
+      const t = await turnoutNow(ballot.id, open.id).catch(() => null);
+      if (t && t.expected > 0 && t.voted < t.expected) {
+        setEarly({ ...t, what: open.current_round === 0 ? 'nominations' : `round ${open.current_round}` });
+        return;
+      }
     }
     setBusy(true);
     try {
@@ -185,6 +195,11 @@ function Live({ ballot, onFinished }: { ballot: Ballot; onFinished: () => void }
     <div className="stack">
       {error ? <Banner kind="error">{error}</Banner> : null}
       {note && !error ? <Banner kind="info">{note}</Banner> : null}
+      {early ? (
+        <CloseEarly turnout={early} what={early.what} busy={busy}
+                    onKeep={() => setEarly(null)}
+                    onClose={() => { setEarly(null); void step(true); }} />
+      ) : null}
       {ballot.status !== 'live'
         ? <Banner kind="info">
             This ballot is {ballot.status}. Voters cannot reach it until you publish it.
