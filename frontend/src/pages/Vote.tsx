@@ -486,7 +486,8 @@ function answerSummary(q: LobbyQuestion): string {
   const picks = Array.isArray(prev) ? prev.map(String) : [String(prev)];
   if (picks.length === 1 && picks[0] === 'abstain') return String(cfg.abstain_label ?? 'Abstain');
   if (q.type === 'yes_no') return String(picks[0] === 'yes' ? cfg.yes_label : cfg.no_label);
-  const labels = picks.map((id) => q.options.find((o) => o.id === id)?.label ?? '').filter(Boolean);
+  // in the order the card lists them, not the order they were stored in
+  const labels = q.options.filter((o) => picks.includes(o.id)).map((o) => o.label);
   return labels.length <= 3
     ? labels.join(', ')
     : `${labels.slice(0, 3).join(', ')} and ${labels.length - 3} more`;
@@ -585,7 +586,11 @@ function Choices({ question, chosen, onChange }: {
       <>
         <p className="faint">
           {cfg.kind === 'nomination'
-            ? `Nominate ${cfg.pick_max === 1 ? 'one person' : `up to ${cfg.pick_max} people`}.`
+            ? cfg.pick_max >= question.options.length && question.options.length > 1
+              ? 'Nominate as many people as you like.'
+              : `Nominate ${cfg.pick_max === 1 ? 'one person' : `up to ${cfg.pick_max} people`}.`
+            : (cfg.seats ?? 1) <= 1 && cfg.pick_max >= question.options.length && question.options.length > 1
+              ? (min === 1 ? 'Choose as many as you like.' : `Choose at least ${min}, as many as you like.`)
             : (cfg.seats ?? 1) > 1
               ? `${cfg.seats_open} seat${cfg.seats_open === 1 ? '' : 's'} open · choose up to ${cfg.pick_max}.`
             : min === cfg.pick_max

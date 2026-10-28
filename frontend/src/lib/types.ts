@@ -137,10 +137,12 @@ export interface HighestXQuestion extends QuestionCommon {
  * functions move.
  */
 export interface RecursionFilterQuestion extends QuestionCommon {
-  nominate_max: number;
+  /** Null: no limit, a voter may nominate everyone in the pool. */
+  nominate_max: number | null;
   nominate_threshold: number;
   pick_min: number;
-  pick_max: number;
+  /** Null: no limit, a voter may pick everyone in the round. */
+  pick_max: number | null;
   stop_on_majority: boolean;
   allow_abstain: boolean;
   abstain_label: string;

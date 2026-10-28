@@ -13,6 +13,7 @@ import { parseOptionList } from '../lib/options';
 import type { OptionPool, QuestionOption, QuestionType } from '../lib/types';
 import { QUESTION_TYPE_NAMES } from '../lib/types';
 import { Banner, Card, Check, Empty, Field, Pill, Spinner, Step } from '../components/ui';
+import { BulkRaces } from './BulkRaces';
 
 export function Questions({ ballotId }: { ballotId: string }) {
   const [questions, setQuestions] = useState<AnyQuestion[] | null>(null);
@@ -41,6 +42,7 @@ export function Questions({ ballotId }: { ballotId: string }) {
             <QuestionCard key={`${q.type}:${q.id}`} question={q} onChanged={load} />
           ))}
 
+      <BulkRaces ballotId={ballotId} after={questions.length} onAdded={load} />
       <AddQuestion ballotId={ballotId} after={questions.length} onAdded={load} />
     </div>
   );
@@ -134,7 +136,9 @@ function AddQuestion({ ballotId, after, onAdded }: {
   const [most, setMost] = useState(1);
   const [mostTouched, setMostTouched] = useState(false);
   // recursion filter
-  const [nominateMax, setNominateMax] = useState(1);
+  // blank: everyone in the pool / everyone in the round
+  const [rfNominate, setRfNominate] = useState('');
+  const [rfMost, setRfMost] = useState('');
   const [threshold, setThreshold] = useState(1);
   const [stopOnMajority, setStopOnMajority] = useState(true);
   const [allowAbstain, setAllowAbstain] = useState(false);
@@ -175,7 +179,8 @@ function AddQuestion({ ballotId, after, onAdded }: {
 
   const tooManySeats = wantsVotes && optionCount > 0 && seats > optionCount;
   const tooManyPicks = wantsVotes && optionCount > 0 && most > optionCount;
-  const backwards = (wantsVotes || (isRecursion && seats === 1)) && least > most;
+  const backwards = (wantsVotes && least > most)
+    || (isRecursion && rfMost !== '' && least > Number(rfMost));
   const votesWrong = tooManySeats || tooManyPicks || backwards;
 
   /*
@@ -190,7 +195,7 @@ function AddQuestion({ ballotId, after, onAdded }: {
   const reset = () => {
     setKind(null); setPrompt(''); setNames(''); setPool(''); setPoolSize(0);
     setSeats(1); setLeast(1); setMost(1); setMostTouched(false);
-    setNominateMax(1); setThreshold(1); setStopOnMajority(true); setAllowAbstain(false);
+    setRfNominate(''); setRfMost(''); setThreshold(1); setStopOnMajority(true); setAllowAbstain(false);
   };
 
   const add = async (e: React.FormEvent) => {
@@ -202,9 +207,10 @@ function AddQuestion({ ballotId, after, onAdded }: {
         ? { winner_count: seats, select_min: least, select_max: most }
         : kind === 'recursion_filter'
           ? {
-              seats, nominate_max: nominateMax, nominate_threshold: threshold,
-              // a committee gives one vote per seat left, round by round
-              pick_min: seats > 1 ? 1 : least, pick_max: seats > 1 ? seats : most,
+              // the seats are confirmed after nominations, not here
+              nominate_max: rfNominate === '' ? null : Number(rfNominate),
+              nominate_threshold: threshold,
+              pick_min: least, pick_max: rfMost === '' ? null : Number(rfMost),
               stop_on_majority: stopOnMajority, allow_abstain: allowAbstain,
             }
           : {};
@@ -334,55 +340,35 @@ function AddQuestion({ ballotId, after, onAdded }: {
         {chosen && isRecursion && prompt.trim() ? (
           <Step n={4} title="How do the rounds work?">
             <div className="row vote-rules">
-              <Field label="How many seats?" help="1 for a chairperson; more for a committee. You confirm it after nominations, before round 1.">
-                <input type="number" min={1} name="add_seats" value={seats}
-                       onChange={(e) => {
-                         const n = Math.max(1, Number(e.target.value));
-                         setSeats(n);
-                         // a voter usually nominates as many as there are seats
-                         setNominateMax(n);
-                       }} />
-              </Field>
-            </div>
-            <div className="row vote-rules">
-              <Field label="Nominations per voter" help="Names each voter may put forward.">
-                <input type="number" min={1} name="add_nominate_max" value={nominateMax}
-                       onChange={(e) => setNominateMax(Math.max(1, Number(e.target.value)))} />
+              <Field label="Nominations per voter" help="Blank: as many as they like, up to everyone in the pool.">
+                <input type="number" min={1} name="add_nominate_max" value={rfNominate} placeholder="Everyone"
+                       onChange={(e) => setRfNominate(e.target.value === '' ? '' : String(Math.max(1, Number(e.target.value))))} />
               </Field>
               <Field label="Nominations needed" help="To get onto the shortlist.">
                 <input type="number" min={1} name="add_threshold" value={threshold}
                        onChange={(e) => setThreshold(Math.max(1, Number(e.target.value)))} />
               </Field>
             </div>
-            {seats > 1 ? (
-              <p className="faint">
-                Each round, a voter can choose up to one person per seat still open: {seats} in the first
-                round, fewer as seats fill.
-              </p>
-            ) : (
-              <div className="row vote-rules">
-                <Field label="Pick at least" help="In each round after nominations.">
-                  <input type="number" min={1} name="add_min" value={least}
-                         onChange={(e) => setLeast(Math.max(1, Number(e.target.value)))} />
-                </Field>
-                <Field label="Pick at most" help="You can change this for any round.">
-                  <input type="number" min={1} name="add_max" value={most}
-                         onChange={(e) => { setMostTouched(true); setMost(Math.max(1, Number(e.target.value))); }} />
-                </Field>
-              </div>
-            )}
-            <Check label={seats > 1 ? 'Elect anyone with a majority' : 'Stop as soon as someone has a majority'}
+            <div className="row vote-rules">
+              <Field label="Pick at least" help="In each round after nominations.">
+                <input type="number" min={1} name="add_min" value={least}
+                       onChange={(e) => setLeast(Math.max(1, Number(e.target.value)))} />
+              </Field>
+              <Field label="Pick at most" help="Blank: up to everyone in the round. A committee gives one per open seat.">
+                <input type="number" min={1} name="add_max" value={rfMost} placeholder="Everyone"
+                       onChange={(e) => setRfMost(e.target.value === '' ? '' : String(Math.max(1, Number(e.target.value))))} />
+              </Field>
+            </div>
+            <Check label="Elect anyone with a majority"
                    checked={stopOnMajority} onChange={setStopOnMajority}
-                   help={seats > 1
-                     ? "Anyone backed by more than half of a round's voters takes a seat straight away. Off: seats fill only when the people left match the seats left."
-                     : "More than half of a round's voters backing one person ends the vote. Off: keep going until one is left."} />
+                   help="More than half of a round's voters backing someone elects them: a chairperson wins, a committee member takes a seat. Off: keep narrowing down." />
             <Check label="Allow abstentions" checked={allowAbstain} onChange={setAllowAbstain} />
             {backwards
               ? <Banner kind="error">The fewest a voter may pick cannot be more than the most.</Banner>
               : <p className="faint">
-                  There is no set number of rounds. After each one you say how people drop out
-                  (everyone on X votes or fewer, the lowest N, or nobody), and break any tie.
-                  You can add people from the pool between rounds.
+                  How many seats are being filled (one for a chairperson, more for a
+                  committee) is asked after nominations, before round 1. There is no set number
+                  of rounds: after each one you say how people drop out, and break any tie.
                 </p>}
           </Step>
         ) : null}
@@ -564,15 +550,11 @@ function TypeSettings({ question, value, set }: {
     const committee = Number(value('seats') ?? 1) > 1;
     return (
       <>
-        <Field label="How many seats?" help="1 for a chairperson; more for a committee. You confirm it again after nominations, before round 1.">
-          <input type="number" min={1} name="seats" value={Number(value('seats') ?? 1)}
-                 onChange={(e) => set('seats', Math.max(1, Number(e.target.value)))} />
-        </Field>
         <div className="row">
           <div className="grow">
-            <Field label="Nominations per voter">
-              <input type="number" min={1} value={Number(value('nominate_max'))}
-                     onChange={(e) => set('nominate_max', Number(e.target.value))} />
+            <Field label="Nominations per voter" help="Blank: up to everyone in the pool.">
+              <input type="number" min={1} placeholder="Everyone" value={value('nominate_max') === null ? '' : Number(value('nominate_max'))}
+                     onChange={(e) => set('nominate_max', e.target.value === '' ? null : Number(e.target.value))} />
             </Field>
           </div>
           <div className="grow">
@@ -590,9 +572,9 @@ function TypeSettings({ question, value, set }: {
             </Field>
           </div>
           <div className="grow">
-            <Field label="Pick at most, per round">
-              <input type="number" min={1} value={Number(value('pick_max'))}
-                     onChange={(e) => set('pick_max', Number(e.target.value))} />
+            <Field label="Pick at most, per round" help="Blank: up to everyone in the round.">
+              <input type="number" min={1} placeholder="Everyone" value={value('pick_max') === null ? '' : Number(value('pick_max'))}
+                     onChange={(e) => set('pick_max', e.target.value === '' ? null : Number(e.target.value))} />
             </Field>
           </div>
         </div>}
