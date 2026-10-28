@@ -103,7 +103,7 @@ function Round({ round, chair, winner, threshold }: {
 
       {nomination && unnamed > 0 ? (
         <p className="faint" style={{ marginTop: 6 }}>
-          {rows.length === 0 ? `Nobody nominated yet out of ${unnamed} in the pool.` : `${unnamed} others in the pool with no nominations.`}
+          {rows.length === 0 ? `Nobody nominated yet out of ${unnamed} in the pool.` : `${unnamed} other${unnamed === 1 ? '' : 's'} in the pool with no nominations.`}
         </p>
       ) : null}
 
