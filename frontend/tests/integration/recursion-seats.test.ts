@@ -195,13 +195,41 @@ describe('a committee of ten and a chairperson, side by side', () => {
     expect((await race(committee)).current_round).toBe(1);
   }, 60000);
 
-  test('the seats are fixed once the vote has started', async () => {
+  test('the seats cannot be edited around the confirm step', async () => {
     const { error } = await organizer.from('questions_recursion_filter').update({ seats: 9 }).eq('id', committee);
     expect(error?.message ?? '').toContain('fixed once the vote has started');
+    const { error: e2 } = await organizer.from('questions_recursion_filter').update({ seats_confirmed: true }).eq('id', committee);
+    expect(e2?.message ?? '').toContain('moved on with its round controls');
+  });
+
+  test('round 1 waits until the chair confirms the seats', async () => {
+    const { error } = await organizer.rpc('set_gate', {
+      p_ballot: ballotId, p_type: 'recursion_filter', p_question: committee, p_open: true,
+    });
+    expect(error?.message ?? '').toContain('Confirm how many seats "Committee" fills before opening round 1');
+    expect((await rpc(organizer, 'settle_round', { p_question: committee })).needs).toBe('seats');
+
+    // only the owner may answer it
+    const { error: anonError } = await anonClient().rpc('set_race_seats', { p_question: committee, p_seats: 10 });
+    expect(anonError?.message ?? '').toMatch(/permission denied|not find/i);
+    const { error: strangerError } = await stranger.rpc('set_race_seats', { p_question: committee, p_seats: 10 });
+    expect(strangerError?.message ?? '').toContain('Not your ballot');
+
+    // changed, then changed back: the last answer stands
+    const nine = await rpc(organizer, 'set_race_seats', { p_question: committee, p_seats: 9 });
+    expect(nine.message).toBe('9 seats to fill from 18 people. Open round 1 when the room is ready.');
+    const ten = await rpc(organizer, 'set_race_seats', { p_question: committee, p_seats: 10 });
+    expect(ten.ok).toBe(true);
+    const { data: r1 } = await organizer.from('rounds_recursion_filter')
+      .select('seats_open, pick_max').eq('question_id', committee).eq('round_no', 1).single();
+    expect(r1).toEqual({ seats_open: 10, pick_max: 10 });
   });
 
   test('round 1: ten votes each; five have a majority and are elected', async () => {
     await gate(committee, true);
+    // once it is open, the seats are fixed
+    const late = await rpc(organizer, 'set_race_seats', { p_question: committee, p_seats: 8 });
+    expect(late.error).toBe('Round 1 has started: the number of seats is fixed.');
     // more votes than seats is refused
     const over = await rpc(anonClient(), 'cast_recursion_filter', {
       p_ballot: ballotId, p_pin: pins[0], p_question: committee,
@@ -243,6 +271,8 @@ describe('a committee of ten and a chairperson, side by side', () => {
     expect(r.ok).toBe(false);                                    // its nominations are still open
     await gate(chair, false);
     expect((await rpc(organizer, 'settle_round', { p_question: chair })).message).toBe('4 people go through to round 1.');
+    const one = await rpc(organizer, 'set_race_seats', { p_question: chair, p_seats: 1 });
+    expect(one.message).toBe('One seat, 4 people. Open round 1 when the room is ready.');
     await gate(chair, true);
     await roomVotes(chair, ballotsFor({ Amy: 16, Bo: 14, Cy: 6, Di: 4 }, 1));
     await gate(chair, false);
@@ -325,5 +355,19 @@ describe('a committee of ten and a chairperson, side by side', () => {
       'P01@1', 'P02@1', 'P03@1', 'P04@1', 'P05@1', 'P06@2', 'P07@2', 'P08@4', 'P09@4', 'P10@4']);
     expect(c.rounds.map((x) => `${x.round}:${x.seats_open}:${x.drop_rule ?? '-'}`)).toEqual(
       ['0:10:-', '1:10:votes', '2:5:count', '3:3:count', '4:3:-']);
+  }, 30000);
+
+  test('fewer people than seats: settling elects them all, and the rest stay empty', async () => {
+    const { data: q } = await organizer.from('questions_recursion_filter')
+      .insert({ ballot_id: ballotId, prompt: 'Small board', seats: 3, sort_order: 30, nominate_threshold: 1 })
+      .select('id').single();
+    const { data: os } = await organizer.from('options_recursion_filter')
+      .insert([{ question_id: q!.id, label: 'Xia' }, { question_id: q!.id, label: 'Yan' }]).select('id');
+    await rpc(organizer, 'settle_round', { p_question: q!.id, p_shortlist: os!.map((o) => o.id) });
+    const asked = await rpc(organizer, 'set_race_seats', { p_question: q!.id, p_seats: 3 });
+    expect(asked.message).toContain('there is nothing to vote on');
+    const a = await rpc(organizer, 'settle_round', { p_question: q!.id });
+    expect(a.message).toBe('Xia, Yan elected. Nobody is left for the last 1 seat, so it stays empty.');
+    expect((await race(q!.id)).phase).toBe('decided');
   }, 30000);
 });

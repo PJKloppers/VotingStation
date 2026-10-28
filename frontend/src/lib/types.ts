@@ -372,6 +372,8 @@ export interface RecursionTally {
   nominate_threshold: number;
   /** Absent on a database that predates seats: read as 1. */
   seats?: number;
+  /** The chair has confirmed the seats after nominations (round 1 waits for it). */
+  seats_confirmed?: boolean;
   winner: { id: string; label: string } | null;
   /** Everyone holding a seat, in seat order. */
   elected?: Array<{ id: string; label: string; round: number | null; seat: number | null }>;

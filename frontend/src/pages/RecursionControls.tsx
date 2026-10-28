@@ -4,6 +4,7 @@
  * Made to be run in front of a room, so the panel shows one thing to do at a
  * time: a single main button that moves the race on.
  *
+ *   after nominations → How many seats are being filled? (round 1 waits)
  *   not opened  → Open nominations / Open round N
  *   open        → Close nominations / Close round N
  *   closed      → Settle… (a round asks how people drop out first)
@@ -42,6 +43,7 @@ export function RecursionControls({ ballotId, questionId, tally, busy, act }: {
 }) {
   const [said, setSaid] = useState<Said>(null);
   const [settling, setSettling] = useState(false);
+  const [changingSeats, setChangingSeats] = useState(false);
 
   const seats = tally.seats ?? 1;
   const committee = seats > 1;
@@ -57,8 +59,11 @@ export function RecursionControls({ ballotId, questionId, tally, busy, act }: {
   const thisRound = current?.options.length ?? 0;
   const name = nominating ? 'nominations' : `round ${tally.current_round}`;
   const Name = nominating ? 'Nominations' : `Round ${tally.current_round}`;
+  // after nominations, round 1 waits for the chair to confirm the seats
+  const beforeRound1 = !nominating && tally.current_round === 1 && !opened && !open;
+  const askSeats = beforeRound1 && (tally.seats_confirmed === false || changingSeats);
   // a round with no more people than seats is not voted on: settling elects them all
-  const nothingToVote = !nominating && !opened && inRace.length <= seatsOpen;
+  const nothingToVote = !nominating && !opened && !askSeats && inRace.length <= seatsOpen;
 
   /** Calls the database, and says what it answered. */
   const call = (fn: () => Promise<RoundAnswer>, onOk?: (a: RoundAnswer) => void) =>
@@ -106,6 +111,20 @@ export function RecursionControls({ ballotId, questionId, tally, busy, act }: {
               : <Pill tone="closed">Not opened yet</Pill>}
           </div>
 
+          {askSeats ? (
+            <SeatsStep tally={tally} busy={busy}
+                       onConfirm={(n) => void call(() => api.setRaceSeats(questionId, n),
+                                                   () => setChangingSeats(false))}
+                       onCancel={tally.seats_confirmed === false ? undefined : () => setChangingSeats(false)} />
+          ) : null}
+
+          {askSeats ? null : <>
+          {beforeRound1 && tally.seats_confirmed !== false ? (
+            <p style={{ margin: '6px 0 0' }}>
+              {seats} seat{seats === 1 ? '' : 's'} to fill{' '}
+              <button className="ghost small" disabled={busy} onClick={() => setChangingSeats(true)}>Change</button>
+            </p>
+          ) : null}
           <p className="faint" style={{ margin: '6px 0 10px' }}>
             {nothingToVote
               ? `Only ${inRace.length} left for ${seatsOpen} seat${seatsOpen === 1 ? '' : 's'}: there is nothing to vote on. Elect them, or add someone from the pool first.`
@@ -146,6 +165,7 @@ export function RecursionControls({ ballotId, questionId, tally, busy, act }: {
               </button>
             </div>
           )}
+          </>}
         </div>
       )}
 
@@ -171,6 +191,47 @@ export function RecursionControls({ ballotId, questionId, tally, busy, act }: {
           would otherwise push every button off the screen. */}
       <div style={{ marginTop: 18 }}>
         <RecursionResult tally={tally} chair />
+      </div>
+    </div>
+  );
+}
+
+/* ----------------------------------------------------- the seats question */
+
+/**
+ * "How many seats are being filled?" -- asked once nominations are in, with
+ * the shortlist in front of the chair. 1 makes it a chairperson's race; more,
+ * a committee. Round 1 does not open until it is answered.
+ */
+function SeatsStep({ tally, busy, onConfirm, onCancel }: {
+  tally: RecursionTally;
+  busy: boolean;
+  onConfirm: (seats: number) => void;
+  onCancel?: () => void;
+}) {
+  const [n, setN] = useState(String(tally.seats ?? 1));
+  const num = Number(n);
+  const valid = n !== '' && Number.isInteger(num) && num >= 1;
+  const people = tally.candidates.filter((c) => c.status === 'in').length;
+
+  const hint = !valid ? 'Give a number, 1 or more.'
+    : people <= num ? `${people} on the shortlist for ${num} seat${num === 1 ? '' : 's'}: there is nothing to vote on. Settling round 1 elects them all.`
+    : num === 1 ? `One seat: a single winner from ${people} on the shortlist.`
+    : `${people} on the shortlist. Each voter will have up to ${num} votes in round 1, fewer as seats fill.`;
+
+  return (
+    <div className="stack" style={{ gap: 8, marginTop: 6 }}>
+      <label className="field">
+        <span><strong>How many seats are being filled?</strong></span>
+        <input type="number" min={1} name="confirm_seats" style={{ width: 100 }}
+               value={n} onChange={(e) => setN(e.target.value)} />
+      </label>
+      <p className={valid ? 'faint' : 'error-text'} aria-live="polite" style={{ margin: 0 }}>{hint}</p>
+      <div className="row">
+        <button className="primary" disabled={busy || !valid} onClick={() => onConfirm(num)}>
+          Confirm {valid ? num : ''} seat{num === 1 ? '' : 's'}
+        </button>
+        {onCancel ? <button className="ghost" onClick={onCancel}>Cancel</button> : null}
       </div>
     </div>
   );

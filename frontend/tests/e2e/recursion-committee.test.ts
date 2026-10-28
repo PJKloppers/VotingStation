@@ -317,6 +317,15 @@ async function chairSees(prompt: string, text: string, timeout = 20000) {
   });
 }
 
+/** Types into the seats question on a race's card. */
+async function typeSeats(prompt: string, n: number) {
+  const input = (await (await raceCard(prompt)).$('input[name="confirm_seats"]'))!;
+  await input.click();
+  await input.evaluate((e) => { (e as HTMLInputElement).select(); });
+  await input.type(String(n), { delay: between(80, 200) });
+  await pause(300, 800);
+}
+
 const dialogText = () => chair.evaluate(() => (document.querySelector('dialog[open]') as HTMLElement | null)?.innerText ?? '');
 
 async function dialogSays(text: string) {
@@ -421,8 +430,23 @@ describe('a committee and a chairperson, side by side, to the end', () => {
     await chairSees(COMMITTEE, 'Closed — settle it');
     expect(await visibleButtons(COMMITTEE)).toEqual(['Settle nominations', 'Reopen']);
     await press(COMMITTEE, 'Settle nominations');
+
+    // before round 1 the chair is asked how many seats; nothing else to press
+    await chairSees(COMMITTEE, 'How many seats are being filled?');
+    expect(await visibleButtons(COMMITTEE)).toEqual(['Confirm 4 seats']);
+    await typeSeats(COMMITTEE, 3);
+    await chairSees(COMMITTEE, '7 on the shortlist. Each voter will have up to 3 votes in round 1');
+    await typeSeats(COMMITTEE, 7);
+    await chairSees(COMMITTEE, 'there is nothing to vote on');
+    await typeSeats(COMMITTEE, 4);
+    await press(COMMITTEE, 'Confirm 4 seats');
+    await chairSees(COMMITTEE, '4 seats to fill');
     await chairSees(COMMITTEE, '7 in this round');
+    expect(await visibleButtons(COMMITTEE)).toEqual(['Change', 'Open round 1']);
+
     await press(CHAIR, 'Settle nominations');
+    await chairSees(CHAIR, 'One seat: a single winner from 4 on the shortlist');
+    await press(CHAIR, 'Confirm 1 seat');
     await chairSees(CHAIR, '4 in this round');
 
     await press(COMMITTEE, 'Open round 1');
@@ -527,7 +551,8 @@ describe('a committee and a chairperson, side by side, to the end', () => {
     await page.waitForFunction(() => document.querySelector('ol.committee'), { timeout: 20000 });
     const committee = await page.$$eval('ol.committee li strong', (n) => n.map((e) => (e as HTMLElement).innerText));
     expect(committee).toEqual(['Ada', 'Ben', 'Cleo', 'Dev']);
-    const text = await page.evaluate(() => document.body.innerText);
+    // the rounds are folded away; their notes are in the page all the same
+    const text = await page.evaluate(() => document.body.textContent ?? '');
     expect(text).toContain('everyone on 3 votes or fewer dropped');
     expect(text).toContain('tie for the last seat broken by the chair');
   }, 60000);

@@ -57,13 +57,24 @@ export function RecursionResult({ tally, chair = false }: {
 
       {shown.length === 0 ? <p className="outcome none">No votes yet</p> : null}
 
-      <div className="stack" style={{ gap: 18 }}>
-        {shown.map((r) => (
-          <Round key={r.round} round={r} chair={chair}
-                 winner={tally.winner?.id ?? null} threshold={tally.nominate_threshold}
-                 seats={seats} />
-        ))}
-      </div>
+      {/* The rounds, folded away: the outcome above is what most people want,
+          and a long race would otherwise push everything else down. Each round
+          opens on its own too; the newest starts open. */}
+      {shown.length > 0 ? (
+        <details className="rounds">
+          <summary>
+            Round by round
+            <span className="faint"> · {shown.length} {shown.length === 1 ? 'stage' : 'stages'}</span>
+          </summary>
+          <div className="stack" style={{ gap: 10, marginTop: 10 }}>
+            {shown.map((r, i) => (
+              <Round key={r.round} round={r} chair={chair} startOpen={i === 0}
+                     winner={tally.winner?.id ?? null} threshold={tally.nominate_threshold}
+                     seats={seats} />
+            ))}
+          </div>
+        </details>
+      ) : null}
     </>
   );
 }
@@ -85,8 +96,10 @@ function inTheRace(t: RecursionTally): string {
   return t.phase === 'nominating' ? '' : `${still} still in`;
 }
 
-function Round({ round, chair, winner, threshold, seats }: {
+function Round({ round, chair, winner, threshold, seats, startOpen }: {
   round: RecursionRound; chair: boolean; winner: string | null; threshold: number; seats: number;
+  /** Shown unfolded at first; the viewer can fold it like any other. */
+  startOpen: boolean;
 }) {
   const t = round.tally;
   const nomination = round.kind === 'nomination';
@@ -95,8 +108,8 @@ function Round({ round, chair, winner, threshold, seats }: {
   const unnamed = t.options.length - rows.length;
 
   return (
-    <section>
-      <div className="row" style={{ marginBottom: 6 }}>
+    <details className="round" open={startOpen}>
+      <summary className="row" style={{ marginBottom: 6 }}>
         <strong className="grow">
           {nomination ? 'Nominations' : `Round ${round.round}`}
           {seats > 1 && !nomination && round.seats_open !== undefined
@@ -105,7 +118,7 @@ function Round({ round, chair, winner, threshold, seats }: {
         {t.gate_open ? <Pill tone="open">Open</Pill>
           : round.settled ? null
           : t.opened ? <Pill tone="pending">To settle</Pill> : null}
-      </div>
+      </summary>
 
       {rows.map((o) => {
         const out = round.settled && (round.dropped ?? []).some((d) => d.id === o.id);
@@ -147,7 +160,7 @@ function Round({ round, chair, winner, threshold, seats }: {
           The cut falls on a tie. You will choose {t.tie_drop_count} of the tied to drop when you settle.
         </Banner>
       ) : null}
-    </section>
+    </details>
   );
 }
 

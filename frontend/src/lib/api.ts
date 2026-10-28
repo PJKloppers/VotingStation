@@ -640,7 +640,7 @@ export interface RoundAnswer {
   ok: boolean;
   error?: string;
   message?: string;
-  needs?: 'tie_break' | 'drop_count' | 'drop_rule' | 'shortlist' | 'seat_tie';
+  needs?: 'tie_break' | 'drop_count' | 'drop_rule' | 'shortlist' | 'seat_tie' | 'seats';
   /** On a tie at the cut or on the last seat: who is tied, and how many. */
   tied?: Array<{ id: string; label: string }>;
   drop_from_tie?: number;
@@ -661,6 +661,10 @@ export const settleRound = (
     p_question: questionId, p_tie_drop: tieDrop ?? null, p_shortlist: shortlist ?? null,
     p_seat_tie: seatTie ?? null,
   });
+
+/** The chair's answer to "how many seats are being filled?", before round 1 opens. */
+export const setRaceSeats = (questionId: string, seats: number) =>
+  roundCall('set_race_seats', { p_question: questionId, p_seats: seats });
 
 /** How people drop out of the round under way: the lowest N, X votes or fewer, or nobody. */
 export const setRoundDrop = (questionId: string, rule: DropRule, n: number | null) =>

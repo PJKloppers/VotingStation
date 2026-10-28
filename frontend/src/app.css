@@ -1119,3 +1119,12 @@ button.share-copy[data-state="copied"]:hover {
 /* a committee, in seat order */
 ol.committee { margin: 0; padding-left: 1.4em; }
 ol.committee li { margin: 2px 0; }
+
+/* a race's rounds, folded away */
+details.rounds { margin-top: 6px; border-top: 1px solid var(--rule-soft); padding-top: 10px; }
+details.rounds > summary { cursor: pointer; font-weight: 600; list-style: revert; }
+details.round { border: 1px solid var(--rule-soft); border-radius: 10px; padding: 8px 12px; }
+details.round > summary { cursor: pointer; list-style: revert; display: flex; }
+details.round > summary::before { content: '▸'; margin-right: 8px; color: var(--ink-faint); }
+details.round[open] > summary::before { content: '▾'; }
+details.round > summary::-webkit-details-marker { display: none; }

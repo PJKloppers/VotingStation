@@ -155,6 +155,12 @@ function Live({ ballot, onFinished }: { ballot: Ballot; onFinished: () => void }
   const enabled = questions.filter((q) => q.enabled);
 
   const step = async () => {
+    // round 1 of a race waits for the seats: the floor button does not skip that
+    const waiting = raceUnderWay(enabled, results);
+    if (waiting?.needsSeats) {
+      setNote(`Confirm how many seats "${waiting.q.prompt}" fills, in its panel below, before round 1.`);
+      return;
+    }
     setBusy(true);
     try {
       const answer = await api.advanceBallot(ballot.id);
@@ -335,7 +341,11 @@ function raceUnderWay(enabled: AnyQuestion[], results: BallotResults | null) {
     if (!last) continue;
     const started = r.tally.current_round > 0 || last.tally.opened;
     if (!started) continue;
-    return { q, round: r.tally.current_round, needsSettle: last.tally.opened && !last.settled };
+    return {
+      q, round: r.tally.current_round, needsSettle: last.tally.opened && !last.settled,
+      // round 1 waits for the chair to confirm how many seats
+      needsSeats: r.tally.current_round === 1 && !last.tally.opened && r.tally.seats_confirmed === false,
+    };
   }
   return null;
 }
@@ -349,6 +359,7 @@ function stepLabel(enabled: AnyQuestion[], results: BallotResults | null): strin
     return `Open: "${open.prompt}", ${open.current_round === 0 ? 'nominations' : `round ${open.current_round}`}${count}.`;
   }
   const race = !open ? raceUnderWay(enabled, results) : null;
+  if (race?.needsSeats) return `"${race.q.prompt}": confirm how many seats below, then open round 1.`;
   if (race) {
     return race.needsSettle
       ? `"${race.q.prompt}" is waiting for you to settle ${race.round === 0 ? 'the nominations' : `round ${race.round}`} below.`
@@ -368,7 +379,8 @@ function stepButton(enabled: AnyQuestion[], results: BallotResults | null): stri
     return open.current_round === 0 ? 'Close nominations' : `Close round ${open.current_round}`;
   }
   const race = !open ? raceUnderWay(enabled, results) : null;
-  if (race) return race.needsSettle ? 'Settle it first' : `Open round ${race.round}`;
+  if (race) return race.needsSeats ? 'Confirm the seats first'
+    : race.needsSettle ? 'Settle it first' : `Open round ${race.round}`;
   if (!open) return next && next !== enabled[0] ? 'Open the next question'
     : next ? 'Open the first question' : 'End the ballot';
   return next ? 'Close and open the next' : 'Close and end the ballot';

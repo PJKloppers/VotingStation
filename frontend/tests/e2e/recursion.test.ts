@@ -192,6 +192,10 @@ describe('a recursion filter, from the chair\'s panel', () => {
 
   test('settling puts the nominated through and offers round 1', async () => {
     await act(chair).then(() => clickWithin(chair, PANEL, 'Closed', 'button', 'Settle nominations'));
+    // before round 1: how many seats? One, as the question was set up
+    await waitForText(chair, 'How many seats are being filled?');
+    await waitForText(chair, 'One seat: a single winner from 4 on the shortlist');
+    await act(chair).then(() => clickWithin(chair, PANEL, 'How many seats', 'button', 'Confirm 1 seat'));
     await waitForText(chair, 'Open round 1');
     await waitForText(chair, '4 in this round');
     const r = await race();

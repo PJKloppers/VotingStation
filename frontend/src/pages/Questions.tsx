@@ -334,7 +334,7 @@ function AddQuestion({ ballotId, after, onAdded }: {
         {chosen && isRecursion && prompt.trim() ? (
           <Step n={4} title="How do the rounds work?">
             <div className="row vote-rules">
-              <Field label="How many seats?" help="1 for a chairperson; more for a committee.">
+              <Field label="How many seats?" help="1 for a chairperson; more for a committee. You confirm it after nominations, before round 1.">
                 <input type="number" min={1} name="add_seats" value={seats}
                        onChange={(e) => {
                          const n = Math.max(1, Number(e.target.value));
@@ -564,7 +564,7 @@ function TypeSettings({ question, value, set }: {
     const committee = Number(value('seats') ?? 1) > 1;
     return (
       <>
-        <Field label="How many seats?" help="1 for a chairperson; more for a committee. Fixed once the vote starts.">
+        <Field label="How many seats?" help="1 for a chairperson; more for a committee. You confirm it again after nominations, before round 1.">
           <input type="number" min={1} name="seats" value={Number(value('seats') ?? 1)}
                  onChange={(e) => set('seats', Math.max(1, Number(e.target.value)))} />
         </Field>

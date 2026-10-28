@@ -489,6 +489,17 @@ async function settleWith(
   note(`chair settles ${prompt} round ${round}`);
 }
 
+/** Answers "how many seats are being filled?" before round 1. */
+async function confirmSeats(prompt: string, n: number) {
+  await chairSees(prompt, 'How many seats are being filled?');
+  const card = await raceCard(prompt);
+  const input = (await card.$('input[name="confirm_seats"]'))!;
+  await input.click();
+  await input.evaluate((e) => { (e as HTMLInputElement).select(); });
+  await input.type(String(n), { delay: between(80, 200) });
+  await press(prompt, `Confirm ${n} seat`);
+}
+
 /** Unfolds "More controls" on a race's card. */
 async function openMore(prompt: string) {
   const card = await raceCard(prompt);
@@ -596,6 +607,7 @@ describe('two recursion filters, one room, run to a winner each', () => {
 
   test('settling Chairperson nominations puts five through; four on 1 stay in the pool', async () => {
     await press(CHAIR, 'Settle nominations');
+    await confirmSeats(CHAIR, 1);
     await chairSees(CHAIR, 'Open round 1');
     await chairSees(CHAIR, '5 in this round');
     expect((await standing(CHAIR)).in).toEqual([ANNA, BEN, CARA, DAN, EVE].sort());
@@ -620,6 +632,7 @@ describe('two recursion filters, one room, run to a winner each', () => {
     expect((await race(CHAIR)).gate_open).toBe(true);           // the other race is untouched
 
     await press(FIN, 'Settle nominations');
+    await confirmSeats(FIN, 1);
     await chairSees(FIN, '6 in this round');
     expect((await standing(FIN)).in).toEqual([GAIL, HUGO, IVY, JON, ANNA, FINN].sort());
 
@@ -782,7 +795,9 @@ describe('two recursion filters, one room, run to a winner each', () => {
     const chairText = await raceText(CHAIR);
     const finText = await raceText(FIN);
     expect(chairText.toLowerCase()).toContain(`won: ${ANNA}`.toLowerCase());
-    expect(finText).toContain('everyone on 5 votes or fewer dropped');
+    // the round notes sit in the folded "Round by round" section
+    const finAll = await (await raceCard(FIN)).evaluate((e) => e.textContent ?? '');
+    expect(finAll).toContain('everyone on 5 votes or fewer dropped');
     expect(finText.toLowerCase()).toContain(`won: ${GAIL}`.toLowerCase());
     // The stages each race went through, as the chair sees them.
     expect(chairText).toMatch(/✓ Nominations[\s\S]*✓ Round 1[\s\S]*✓ Round 2[\s\S]*✓ Round 3/i);
