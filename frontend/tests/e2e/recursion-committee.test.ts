@@ -316,7 +316,11 @@ async function press(prompt: string, label: string) {
     return card ? [...card.querySelectorAll('button')].find((b) =>
       !b.closest('dialog') && (b as HTMLElement).innerText.trim() === l && !(b as HTMLButtonElement).disabled) ?? false : false;
   }, { timeout: 20000, polling: 250 }, prompt, label);
-  await (handle.asElement() as ElementHandle<Element>).click();
+  const button = handle.asElement() as ElementHandle<Element>;
+  // clear of the sticky top bar, as a person would scroll it
+  await button.evaluate((e) => e.scrollIntoView({ block: 'center' }));
+  await pause(150, 300);
+  await button.click();
   note(`chair presses "${label}" on ${prompt}`);
 }
 
@@ -334,6 +338,7 @@ async function chairSees(prompt: string, text: string, timeout = 20000) {
 /** Types into the seats question on a race's card. */
 async function typeSeats(prompt: string, n: number) {
   const input = (await (await raceCard(prompt)).$('input[name="confirm_seats"]'))!;
+  await input.evaluate((e) => e.scrollIntoView({ block: 'center' }));
   await input.click();
   await input.evaluate((e) => { (e as HTMLInputElement).select(); });
   await input.type(String(n), { delay: between(80, 200) });
@@ -357,7 +362,8 @@ async function answer(rule: 'votes' | 'count' | 'none', n: number | null = null)
     await (await dialog.$('input[name="drop_rule"][value="none"]'))!.click();
   } else {
     const input = (await dialog.$(`input[name="drop_${rule === 'votes' ? 'votes' : 'count'}"]`))!;
-    await input.click();
+    await input.evaluate((e) => e.scrollIntoView({ block: 'center' }));
+  await input.click();
     await input.evaluate((e) => { (e as HTMLInputElement).select(); });
     await input.type(String(n), { delay: between(80, 200) });
   }

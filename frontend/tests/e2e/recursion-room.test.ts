@@ -443,7 +443,11 @@ async function press(prompt: string, label: string, exact = false) {
       return !(b as HTMLButtonElement).disabled && (ex ? t === l : t.startsWith(l));
     }) ?? false;
   }, { timeout: 20000, polling: 250 }, prompt, label, exact);
-  await (handle.asElement() as ElementHandle<Element>).click();
+  const button = handle.asElement() as ElementHandle<Element>;
+  // clear of the sticky top bar, as a person would scroll it
+  await button.evaluate((e) => e.scrollIntoView({ block: 'center' }));
+  await pause(150, 300);
+  await button.click();
   note(`chair presses "${label}" on ${prompt}`);
 }
 
@@ -472,7 +476,8 @@ async function settleWith(
     await (await dialog.$('input[name="drop_rule"][value="none"]'))!.click();
   } else if (rule) {
     const input = (await dialog.$(`input[name="drop_${rule === 'votes' ? 'votes' : 'count'}"]`))!;
-    await input.click();
+    await input.evaluate((e) => e.scrollIntoView({ block: 'center' }));
+  await input.click();
     await input.evaluate((e) => { (e as HTMLInputElement).select(); });
     await input.type(String(n), { delay: between(80, 200) });
   }
@@ -508,6 +513,7 @@ async function confirmSeats(prompt: string, n: number) {
   await chairSees(prompt, 'How many seats are being filled?');
   const card = await raceCard(prompt);
   const input = (await card.$('input[name="confirm_seats"]'))!;
+  await input.evaluate((e) => e.scrollIntoView({ block: 'center' }));
   await input.click();
   await input.evaluate((e) => { (e as HTMLInputElement).select(); });
   await input.type(String(n), { delay: between(80, 200) });
@@ -518,7 +524,11 @@ async function confirmSeats(prompt: string, n: number) {
 async function openMore(prompt: string) {
   const card = await raceCard(prompt);
   const open = await card.$eval('details.more-controls', (d) => (d as HTMLDetailsElement).open);
-  if (!open) await (await card.$('details.more-controls > summary'))!.click();
+  if (!open) {
+    const summary = (await card.$('details.more-controls > summary'))!;
+    await summary.evaluate((e) => e.scrollIntoView({ block: 'center' }));
+    await summary.click();
+  }
   await pause(300, 700);
 }
 
@@ -710,7 +720,9 @@ describe('two recursion filters, one room, run to a winner each', () => {
       const t = await r.evaluate((e) => (e as HTMLElement).innerText);
       if (t.startsWith(IVY) && t.includes('Withdraw')) {
         await pause(500, 1500);
-        await (await r.$('button'))!.click();                // confirm() is accepted by the dialog handler
+        const withdraw = (await r.$('button'))!;
+        await withdraw.evaluate((e) => e.scrollIntoView({ block: 'center' }));
+        await withdraw.click();                              // confirm() is accepted by the dialog handler
         withdrew = true;
         break;
       }
