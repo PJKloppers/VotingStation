@@ -273,13 +273,27 @@ const anonRoom = (prompt: string, script: Script) =>
 
 /** The voter's card for a question, in the round named, with names to tap. */
 async function ballotCard(page: Page, prompt: string, stage: string, timeout = 30000) {
-  const handle = await page.waitForFunction((p: string, s: string) =>
-    [...document.querySelectorAll('.card')].find((c) =>
+  const find = (needChoices: boolean) => page.waitForFunction((p: string, st: string, need: boolean) =>
+    [...document.querySelectorAll('[data-question-card]')].find((c) =>
       (c.querySelector('h2') as HTMLElement | null)?.innerText.trim() === p
-      && (c.querySelector('.eyebrow') as HTMLElement | null)?.innerText.trim().toLowerCase() === s.toLowerCase()
-      && c.querySelector('.choice')) ?? false,
-  { timeout, polling: 250 }, prompt, stage);
-  return handle.asElement() as ElementHandle<Element>;
+      && (c.querySelector('.eyebrow') as HTMLElement | null)?.innerText.trim().toLowerCase() === st.toLowerCase()
+      && (!need || c.querySelector('.choice'))) ?? false,
+  { timeout, polling: 250 }, prompt, stage, needChoices);
+  const card = (await find(false)).asElement() as ElementHandle<Element>;
+  // folded (several questions open, or already answered): open it, as a person would
+  if (!(await card.$('.choice'))) {
+    const opener = await card.$$('button');
+    for (const b of opener) {
+      const t = await b.evaluate((e) => (e as HTMLElement).innerText.trim());
+      if (t === 'Vote' || t === 'Change my vote') {
+        await pause(300, 900);
+        await b.evaluate((e) => e.scrollIntoView({ block: 'center' }));
+        await b.click();
+        break;
+      }
+    }
+  }
+  return (await find(true)).asElement() as ElementHandle<Element>;
 }
 
 const labelsIn = (card: ElementHandle<Element>) =>
@@ -385,7 +399,7 @@ const phonesVote = (prompt: string, stage: string, script: Script, expectOn?: st
 /** What a phone has open to vote on right now: "prompt|stage" for each card. */
 const openOn = (p: Phone) => p.page.evaluate(() =>
   [...document.querySelectorAll('.card')]
-    .filter((c) => c.querySelector('.choice'))
+    .filter((c) => c.hasAttribute('data-question-card'))
     .map((c) => `${(c.querySelector('h2') as HTMLElement).innerText.trim()}|${(c.querySelector('.eyebrow') as HTMLElement).innerText.trim().toLowerCase()}`)
     .sort());
 
@@ -394,7 +408,7 @@ async function phonesShow(cards: string[], timeout = 30000) {
   const want = [...cards].map((c) => c.toLowerCase()).sort();
   await Promise.all(phones.map((p) => p.page.waitForFunction((w: string[]) => {
     const got = [...document.querySelectorAll('.card')]
-      .filter((c) => c.querySelector('.choice'))
+      .filter((c) => c.hasAttribute('data-question-card'))
       .map((c) => `${(c.querySelector('h2') as HTMLElement).innerText.trim()}|${(c.querySelector('.eyebrow') as HTMLElement).innerText.trim()}`.toLowerCase())
       .sort();
     return JSON.stringify(got) === JSON.stringify(w);

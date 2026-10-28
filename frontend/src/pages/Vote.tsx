@@ -349,6 +349,8 @@ function Floor({ state, ballotId, pin, busy, onAnswered, onExit }: {
               gated={ballot.mode === 'gated'}
               alreadyVoted={ballot.already_voted_message}
               onAnswered={onAnswered}
+              // with several open at once, every card starts folded
+              alone={questions.length === 1}
             />
           ))}
         </>
@@ -366,7 +368,7 @@ function Floor({ state, ballotId, pin, busy, onAnswered, onExit }: {
 /* ------------------------------------------------------------- one question */
 
 function QuestionCard({
-  question, ballotId, pin, allowChange, showResults, gated, alreadyVoted, onAnswered,
+  question, ballotId, pin, allowChange, showResults, gated, alreadyVoted, onAnswered, alone,
 }: {
   question: LobbyQuestion;
   ballotId: string;
@@ -376,11 +378,20 @@ function QuestionCard({
   gated: boolean;
   alreadyVoted: string;
   onAnswered: (next: VoterState | Refused) => boolean;
+  /** The only question open: it starts unfolded, unless already answered. */
+  alone: boolean;
 }) {
   const [chosen, setChosen] = useState<string[]>(() => initial(question));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [recorded, setRecorded] = useState(false);
+  /*
+   * Folded or not. A long list (forty names to nominate from) is only worth
+   * the screen while it is being answered: once the vote is in, the card
+   * folds to a line saying what was chosen. With several questions open,
+   * every card starts folded so the voter sees them all at once.
+   */
+  const [open, setOpen] = useState(() => alone && !question.voted);
 
   const settled = question.voted && !allowChange;
   const problem = selectionError(question, chosen);
@@ -391,6 +402,7 @@ function QuestionCard({
       const answer = await cast(ballotId, pin, question, chosen);
       if (answer.ok) {
         setRecorded(true);
+        setOpen(false);
         onAnswered(answer.state);
       } else {
         setError(answer.error);
@@ -402,19 +414,35 @@ function QuestionCard({
     }
   };
 
+  const folded = !open && !settled;
+
   return (
-    <Card>
+    <Card data-question-card="">
       {question.type === 'recursion_filter' ? <RoundLabel question={question} /> : null}
       <div className="row" style={{ marginBottom: 6 }}>
         <h2 className="grow">{question.prompt}</h2>
         {question.voted
           ? <Pill tone="carried">{allowChange ? 'Answered' : 'Voted'}</Pill>
           : null}
+        {open && !settled && (!alone || question.voted)
+          ? <button className="ghost small" onClick={() => setOpen(false)}>Hide</button>
+          : null}
       </div>
-      {question.description ? <p className="lede">{question.description}</p> : null}
+      {question.description && !folded ? <p className="lede">{question.description}</p> : null}
 
       {settled ? (
         <p className="faint">{alreadyVoted}</p>
+      ) : folded ? (
+        <>
+          {recorded && !error ? <Banner kind="good">Your answer is recorded.</Banner> : null}
+          <p className="faint" style={{ margin: '6px 0 10px' }}>
+            {question.voted ? `You chose: ${answerSummary(question)}` : 'Not answered yet.'}
+          </p>
+          <button className={question.voted ? 'ghost block' : 'primary block'}
+                  onClick={() => { setOpen(true); setRecorded(false); }}>
+            {question.voted ? 'Change my vote' : 'Vote'}
+          </button>
+        </>
       ) : (
         <>
           {question.voted && allowChange && !recorded
@@ -445,6 +473,23 @@ function QuestionCard({
       ) : null}
     </Card>
   );
+}
+
+/**
+ * What this voter chose, in a line: "Yes", or "Alma Muller, Annelie van Wyk,
+ * Bettie van Rensburg and 16 more".
+ */
+function answerSummary(q: LobbyQuestion): string {
+  const prev = q.previous;
+  if (prev === null || prev === undefined) return '';
+  const cfg = q.config as Record<string, unknown>;
+  const picks = Array.isArray(prev) ? prev.map(String) : [String(prev)];
+  if (picks.length === 1 && picks[0] === 'abstain') return String(cfg.abstain_label ?? 'Abstain');
+  if (q.type === 'yes_no') return String(picks[0] === 'yes' ? cfg.yes_label : cfg.no_label);
+  const labels = picks.map((id) => q.options.find((o) => o.id === id)?.label ?? '').filter(Boolean);
+  return labels.length <= 3
+    ? labels.join(', ')
+    : `${labels.slice(0, 3).join(', ')} and ${labels.length - 3} more`;
 }
 
 function roundOf(q: LobbyQuestion): number {
