@@ -410,8 +410,8 @@ describe('a committee and a chairperson, side by side, to the end', () => {
     await chair.goto(`${origin}/#/manage/${ballotId}`, { waitUntil: 'networkidle0' });
 
     await chairSees(COMMITTEE, '0 of 4 seats filled');
-    expect(await visibleButtons(COMMITTEE)).toEqual(['Open nominations']);
-    expect(await visibleButtons(CHAIR)).toEqual(['Open nominations']);
+    expect(await visibleButtons(COMMITTEE)).toEqual(['Open nominations', 'Add to nominations']);
+    expect(await visibleButtons(CHAIR)).toEqual(['Open nominations', 'Add to nominations']);
     // the rest is folded away until wanted
     const folded = await (await raceCard(COMMITTEE)).$eval('details.more-controls', (d) => (d as HTMLDetailsElement).open);
     expect(folded).toBe(false);
@@ -448,7 +448,7 @@ describe('a committee and a chairperson, side by side, to the end', () => {
     await press(COMMITTEE, 'Close nominations');
     await press(CHAIR, 'Close nominations');
     await chairSees(COMMITTEE, 'Closed — settle it');
-    expect(await visibleButtons(COMMITTEE)).toEqual(['Settle nominations', 'Reopen']);
+    expect(await visibleButtons(COMMITTEE)).toEqual(['Settle nominations', 'Reopen', 'Add to nominations']);
     await press(COMMITTEE, 'Settle nominations');
 
     // before round 1 the chair is asked how many seats; nothing else to press

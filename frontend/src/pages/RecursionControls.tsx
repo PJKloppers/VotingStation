@@ -179,6 +179,10 @@ export function RecursionControls({ ballotId, questionId, tally, busy, act }: {
               </button>
             </div>
           )}
+          {nominating ? (
+            <NewName questionId={questionId} busy={busy} call={call} nominating
+                     tally={tally} />
+          ) : null}
           </>}
         </div>
       )}
@@ -215,6 +219,47 @@ export function RecursionControls({ ballotId, questionId, tally, busy, act }: {
       <div style={{ marginTop: 18 }}>
         <RecursionResult tally={tally} chair />
       </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------- a name from the floor */
+
+/**
+ * Adds someone who is not on the list at all, for example a name called from
+ * the floor. During nominations they join the list voters nominate from, even
+ * while nominations are open; after that they go straight into the race.
+ */
+function NewName({ tally, questionId, busy, call, nominating = false }: {
+  tally: RecursionTally;
+  questionId: string;
+  busy: boolean;
+  call: (fn: () => Promise<RoundAnswer>, onOk?: (a: RoundAnswer) => void) => Promise<void>;
+  nominating?: boolean;
+}) {
+  const [name, setName] = useState('');
+  const clean = name.trim();
+  const taken = clean !== '' && tally.candidates.some((c) => c.label.trim().toLowerCase() === clean.toLowerCase());
+  const add = () => {
+    if (!clean || taken) return;
+    void call(() => api.nominateNew(questionId, clean), () => setName(''));
+  };
+  return (
+    <div style={{ marginTop: nominating ? 14 : 0 }}>
+      <p className="faint" style={{ margin: '0 0 6px' }}>
+        {nominating
+          ? 'Someone not on the list? Add them, and voters can nominate them too.'
+          : 'Someone not on the list at all? Add them to the race.'}
+      </p>
+      <form className="row" onSubmit={(e) => { e.preventDefault(); add(); }}>
+        <input className="grow" name="nominate_new" value={name} maxLength={200}
+               placeholder="Full name" autoComplete="off"
+               onChange={(e) => setName(e.target.value)} />
+        <button type="submit" className="ghost" disabled={busy || !clean || taken}>
+          {nominating ? 'Add to nominations' : 'Add to the race'}
+        </button>
+      </form>
+      {taken ? <p className="faint" style={{ margin: '4px 0 0' }}>{clean} is already on the list.</p> : null}
     </div>
   );
 }
@@ -519,6 +564,9 @@ function More({ tally, questionId, busy, call }: {
             Add
           </button>
         </div>
+
+        {/* someone not on the list at all */}
+        {nominating ? null : <NewName questionId={questionId} busy={busy} call={call} tally={tally} />}
 
         {/* the shortlist by hand, instead of nominations */}
         {nominating && !open ? (

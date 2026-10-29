@@ -686,6 +686,10 @@ export const setRoundPicks = (questionId: string, min: number, max: number) =>
 export const addCandidate = (questionId: string, optionId: string) =>
   roundCall('add_candidate', { p_question: questionId, p_option: optionId });
 
+/** A name not on the list yet: onto the nominations list, or (after nominations) into the race. */
+export const nominateNew = (questionId: string, label: string) =>
+  roundCall('nominate_new', { p_question: questionId, p_label: label });
+
 export const withdrawCandidate = (questionId: string, optionId: string) =>
   roundCall('withdraw_candidate', { p_question: questionId, p_option: optionId });
 
