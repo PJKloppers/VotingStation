@@ -13,6 +13,7 @@ import '../live.css';
 import * as api from '../lib/api';
 import { useLiveResults, type LiveStatus } from '../lib/live';
 import { thresholdRule } from '../lib/rules';
+import { newSeed, shuffled } from '../lib/shuffle';
 import { href, navigate } from '../lib/router';
 import type {
   Ballot, HighestXTally, OutrightTally, QuestionResult, YesNoTally,
@@ -24,6 +25,15 @@ export function Live({ ballotId }: { ballotId: string }) {
   const [ballot, setBallot] = useState<Ballot | null>(null);
   const [missing, setMissing] = useState(false);
   const { results, error, status, updatedAt, changes, refresh } = useLiveResults(ballotId);
+  // What the projector shows only: the counts are still read, just not drawn.
+  const [hideCounts, setHideCounts] = useState(() => readHideCounts());
+  // with the counts hidden, lists are in a fixed random order, not by votes
+  const [seed] = useState(newSeed);
+  const shuffle = hideCounts ? seed : undefined;
+  const toggleCounts = (hide: boolean) => {
+    setHideCounts(hide);
+    try { localStorage.setItem(HIDE_COUNTS_KEY, hide ? '1' : '0'); } catch { /* private window */ }
+  };
 
   useEffect(() => {
     api.ballotById(ballotId)
@@ -46,7 +56,7 @@ export function Live({ ballotId }: { ballotId: string }) {
   if (!results && !error) return <main><Spinner label="Reading the count" /></main>;
 
   return (
-    <main className="monitor">
+    <main className={`monitor${hideCounts ? ' hide-counts' : ''}`}>
       <header className="monitor-head">
         <div>
           <p className="eyebrow">Live results</p>
@@ -58,6 +68,11 @@ export function Live({ ballotId }: { ballotId: string }) {
             </span>
             <button className="ghost small" onClick={refresh}>Refresh</button>
             <a className="btn btn-ghost small" href={href(`/manage/${ballotId}`)}>Manage</a>
+            <label className="check count-toggle">
+              <input type="checkbox" name="hide_counts" checked={hideCounts}
+                     onChange={(e) => toggleCounts(e.target.checked)} />
+              <span>Hide vote counts</span>
+            </label>
           </div>
         </div>
 
@@ -85,11 +100,18 @@ export function Live({ ballotId }: { ballotId: string }) {
 
       <div className="monitor-grid">
         {results?.questions.map((q) => (
-          <MonitorCard key={q.id} result={q} changes={changes} />
+          <MonitorCard key={q.id} result={q} changes={changes} shuffle={shuffle} />
         ))}
       </div>
     </main>
   );
+}
+
+const HIDE_COUNTS_KEY = 'monitor.hideCounts';
+
+/** Hidden unless this screen was told to show them. */
+function readHideCounts(): boolean {
+  try { return localStorage.getItem(HIDE_COUNTS_KEY) !== '0'; } catch { return true; }
 }
 
 function Link({ status }: { status: LiveStatus }) {
@@ -110,7 +132,11 @@ function Link({ status }: { status: LiveStatus }) {
  * One question. `changes` only ever goes up, so a card can notice that
  * something landed while it was on screen and flicker once.
  */
-function MonitorCard({ result, changes }: { result: QuestionResult; changes: number }) {
+function MonitorCard({ result, changes, shuffle }: {
+  result: QuestionResult; changes: number;
+  /** Set when the counts are hidden: options in this seed's fixed order. */
+  shuffle?: string;
+}) {
   const [moved, setMoved] = useState(false);
   const seen = useRef(changes);
 
@@ -130,9 +156,9 @@ function MonitorCard({ result, changes }: { result: QuestionResult; changes: num
       </div>
 
       {result.type === 'yes_no' ? <YesNo tally={result.tally} /> : null}
-      {result.type === 'highest_outright' ? <Outright tally={result.tally} /> : null}
-      {result.type === 'highest_x' ? <HighestX tally={result.tally} /> : null}
-      {result.type === 'recursion_filter' ? <RecursionResult tally={result.tally} chair /> : null}
+      {result.type === 'highest_outright' ? <Outright tally={result.tally} shuffle={shuffle} /> : null}
+      {result.type === 'highest_x' ? <HighestX tally={result.tally} shuffle={shuffle} /> : null}
+      {result.type === 'recursion_filter' ? <RecursionResult tally={result.tally} chair shuffle={shuffle} /> : null}
     </div>
   );
 }
@@ -171,7 +197,8 @@ function YesNo({ tally }: { tally: YesNoTally }) {
   );
 }
 
-function Outright({ tally }: { tally: OutrightTally }) {
+function Outright({ tally, shuffle }: { tally: OutrightTally; shuffle?: string }) {
+  const options = shuffle ? shuffled(tally.options, shuffle, (o) => o.id) : tally.options;
   const winner = tally.options.find((o) => o.id === tally.winner);
   const headline = tally.total === 0 ? 'No votes yet'
     : tally.tied ? 'Tied'
@@ -183,7 +210,7 @@ function Outright({ tally }: { tally: OutrightTally }) {
       <p className={`headline ${tally.total === 0 || !winner ? 'waiting' : 'carried'}`}>
         {headline}
       </p>
-      {tally.options.map((o) => (
+      {options.map((o) => (
         <Bar key={o.id} label={o.label} votes={o.votes ?? 0} share={o.share ?? 0}
              tone={o.id === tally.winner ? 'won' : o.votes === 0 ? 'lost' : ''} />
       ))}
@@ -195,8 +222,9 @@ function Outright({ tally }: { tally: OutrightTally }) {
   );
 }
 
-function HighestX({ tally }: { tally: HighestXTally }) {
-  const elected = tally.options.filter((o) => o.elected);
+function HighestX({ tally, shuffle }: { tally: HighestXTally; shuffle?: string }) {
+  const options = shuffle ? shuffled(tally.options, shuffle, (o) => o.id) : tally.options;
+  const elected = options.filter((o) => o.elected);
   return (
     <>
       <p className={`headline ${tally.total === 0 ? 'waiting' : 'carried'}`}>
@@ -208,7 +236,7 @@ function HighestX({ tally }: { tally: HighestXTally }) {
       {/* The monitor reads as the owner, so a count is always there -- the null
           is only ever the public shape of this same type. */}
       <div style={{ marginTop: tally.tied_at_cut ? 12 : 0 }}>
-        {tally.options.map((o) => (
+        {options.map((o) => (
           <Bar key={o.id} label={o.label} votes={o.votes ?? 0} share={o.share ?? 0}
                tone={o.elected ? 'won' : o.votes === 0 ? 'lost' : ''} />
         ))}

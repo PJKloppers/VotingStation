@@ -78,3 +78,8 @@
   .turnout { margin-left: 0; text-align: left; gap: 20px; }
   .monitor-grid { grid-template-columns: 1fr; }
 }
+
+/* "Hide vote counts": each person's number and share leave the screen; the
+   bars, the order and the outcome stay. Only this page is affected. */
+.monitor.hide-counts .result-bar .count { visibility: hidden; }
+.count-toggle { margin: 0; }

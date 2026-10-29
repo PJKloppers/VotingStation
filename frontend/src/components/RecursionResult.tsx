@@ -6,13 +6,16 @@
  * What each of those may see is decided in the database; this only lays out
  * what it is handed.
  */
+import { shuffled } from '../lib/shuffle';
 import type { RecursionRound, RecursionTally } from '../lib/types';
 import { Banner, Pill } from './ui';
 
-export function RecursionResult({ tally, chair = false }: {
+export function RecursionResult({ tally, chair = false, shuffle }: {
   tally: RecursionTally;
   /** The chair sees an unsettled round's projected cut; nobody else needs it. */
   chair?: boolean;
+  /** Set when the counts are hidden: each round's names in this seed's fixed order. */
+  shuffle?: string;
 }) {
   // Rounds that have not been opened yet hold nothing to show.
   const shown = tally.rounds
@@ -70,7 +73,7 @@ export function RecursionResult({ tally, chair = false }: {
             {shown.map((r, i) => (
               <Round key={r.round} round={r} chair={chair} startOpen={i === 0}
                      winner={tally.winner?.id ?? null} threshold={tally.nominate_threshold}
-                     seats={seats} />
+                     seats={seats} shuffle={shuffle} />
             ))}
           </div>
         </details>
@@ -96,16 +99,18 @@ function inTheRace(t: RecursionTally): string {
   return t.phase === 'nominating' ? '' : `${still} still in`;
 }
 
-function Round({ round, chair, winner, threshold, seats, startOpen }: {
+function Round({ round, chair, winner, threshold, seats, startOpen, shuffle }: {
   round: RecursionRound; chair: boolean; winner: string | null; threshold: number; seats: number;
+  shuffle?: string;
   /** Shown unfolded at first; the viewer can fold it like any other. */
   startOpen: boolean;
 }) {
   const t = round.tally;
   const nomination = round.kind === 'nomination';
   // A nomination round lists the whole pool; only the named are worth a bar.
-  const rows = nomination ? t.options.filter((o) => o.votes > 0) : t.options;
-  const unnamed = t.options.length - rows.length;
+  const named = nomination ? t.options.filter((o) => o.votes > 0) : t.options;
+  const rows = shuffle ? shuffled(named, shuffle, (o) => o.id) : named;
+  const unnamed = t.options.length - named.length;
 
   return (
     <details className="round" open={startOpen}>

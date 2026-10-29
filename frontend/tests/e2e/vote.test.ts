@@ -370,6 +370,22 @@ describe('the live monitor', () => {
     // The socket is up, so a change will be pushed rather than waited for.
     await page.waitForSelector('.link-state.live', { timeout: 20000 });
 
+    // Each count starts hidden: the projector shows the bars and the outcome only.
+    expect(await page.$eval('input[name="hide_counts"]', (e) => (e as HTMLInputElement).checked)).toBe(true);
+    expect(await countsVisible(page)).toEqual({ shown: 0, hidden: expect.any(Number) });
+    expect((await countsVisible(page)).hidden).toBeGreaterThan(0);
+    // the outcome is still there
+    await waitForText(page, 'Adopt the minutes');
+
+    // the chair turns them on, and this screen remembers it
+    await page.click('input[name="hide_counts"]');
+    expect((await countsVisible(page)).hidden).toBe(0);
+    await page.reload({ waitUntil: 'networkidle0' });
+    await waitForText(page, 'Adopt the minutes');
+    expect(await page.$eval('input[name="hide_counts"]', (e) => (e as HTMLInputElement).checked)).toBe(false);
+    expect((await countsVisible(page)).hidden).toBe(0);
+    await page.waitForSelector('.link-state.live', { timeout: 20000 });
+
     const before = await countOn(page, 'Adopt the minutes');
 
     // A vote cast from somewhere else entirely.
@@ -397,9 +413,22 @@ describe('the live monitor', () => {
       'Adopt the minutes', before,
     );
 
+    // and off again
+    await page.click('input[name="hide_counts"]');
+    expect((await countsVisible(page)).shown).toBe(0);
+
     await page.close();
   });
 });
+
+/** How many counts on the monitor are drawn, and how many are hidden. */
+function countsVisible(page: Page): Promise<{ shown: number; hidden: number }> {
+  return page.evaluate(() => {
+    const all = [...document.querySelectorAll('.monitor .result-bar .count')];
+    const hidden = all.filter((n) => getComputedStyle(n).visibility === 'hidden').length;
+    return { shown: all.length - hidden, hidden };
+  });
+}
 
 /** Total votes shown on one question's card. */
 async function countOn(page: Page, prompt: string): Promise<number> {
