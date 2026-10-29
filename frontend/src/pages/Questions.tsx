@@ -476,12 +476,13 @@ function QuestionCard({ question, onChanged }: { question: AnyQuestion; onChange
 
           {question.type === 'recursion_filter' && (question.current_round > 0 || question.opened_at)
             ? <Banner kind="info">
-                This vote has started, so its pool is managed from the Live tab: add
-                people from the pool or withdraw them between rounds.
+                This vote has started. Remove takes someone off the list (nominations
+                already made for them stop counting); add new names from the Live tab.
               </Banner>
             : null}
           {question.type !== 'yes_no'
             ? <Options type={question.type} questionId={question.id}
+                       started={question.type === 'recursion_filter' && (question.current_round > 0 || !!question.opened_at)}
                        title={question.type === 'recursion_filter' ? 'The pool' : 'Options'} />
             : null}
         </div>
@@ -673,13 +674,17 @@ function CopyFromPool({ type, questionId, onCopied }: {
   );
 }
 
-function Options({ type, questionId, title = 'Options' }: {
+function Options({ type, questionId, title = 'Options', started = false }: {
   type: QuestionType; questionId: string; title?: string;
+  /** A race under way: its names move only through the race's own functions. */
+  started?: boolean;
 }) {
   const [options, setOptions] = useState<QuestionOption[] | null>(null);
   const [draft, setDraft] = useState('');
   const [error, setError] = useState('');
+  const [said, setSaid] = useState('');
   const [busy, setBusy] = useState(false);
+  const race = type === 'recursion_filter';
 
   const load = useCallback(async () => {
     setOptions(await api.optionsForQuestion(type, questionId));
@@ -703,6 +708,43 @@ function Options({ type, questionId, title = 'Options' }: {
     }
   };
 
+  /** Runs one change, shows its message or what went wrong, and reloads the list. */
+  const run = async (fn: () => Promise<string | void>) => {
+    setError(''); setSaid(''); setBusy(true);
+    try {
+      const message = await fn();
+      if (message) setSaid(message);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'That did not work.');
+    } finally {
+      setBusy(false);
+      await load();
+    }
+  };
+
+  /** A race's answer is a sentence; a refusal becomes the error shown. */
+  const raceCall = async (fn: () => Promise<api.RoundAnswer>) => {
+    const answer = await fn();
+    if (!answer.ok) throw new Error(answer.error ?? 'That did not work.');
+    return answer.message ?? '';
+  };
+
+  const remove = (o: QuestionOption) => run(async () => {
+    if (race) return raceCall(() => api.removeRaceOption(questionId, o.id));
+    await api.deleteOption(type, o.id);
+    return `"${o.label}" is removed.`;
+  });
+
+  const rename = (o: QuestionOption, label: string, input: HTMLInputElement) => run(async () => {
+    try {
+      if (race) return await raceCall(() => api.renameRaceOption(questionId, o.id, label));
+      await api.updateOption(type, o.id, { label });
+    } catch (err) {
+      input.value = o.label;              // back to what is stored
+      throw err;
+    }
+  });
+
   if (options === null) return null;
 
   return (
@@ -711,24 +753,37 @@ function Options({ type, questionId, title = 'Options' }: {
       {error ? <Banner kind="error">{error}</Banner> : null}
       {options.length === 0 ? <p className="faint">No options yet.</p> : null}
 
-      {options.map((o) => (
-        <div key={o.id} className="row" style={{ marginBottom: 8 }}>
-          <input className="grow" name="option_label" defaultValue={o.label}
-                 onBlur={(e) => {
-                   if (e.target.value !== o.label) {
-                     void api.updateOption(type, o.id, { label: e.target.value }).then(load);
-                   }
-                 }} />
-          <button className="ghost small" onClick={() => void api.updateOption(type, o.id, { enabled: !o.enabled }).then(load)}>
-            {o.enabled ? 'Disable' : 'Enable'}
-          </button>
-          <button className="danger small"
-                  onClick={() => { if (confirm(`Remove "${o.label}"?`)) void api.deleteOption(type, o.id).then(load); }}>
-            Remove
-          </button>
-        </div>
-      ))}
+      {said ? <p className="faint" role="status" style={{ margin: '0 0 8px' }}>{said}</p> : null}
 
+      {options.map((o) => {
+        const out = race && o.status !== undefined && !['pool', 'in'].includes(o.status);
+        return (
+          <div key={o.id} className="row" style={{ marginBottom: 8 }} data-option={o.label}>
+            <input className="grow" name="option_label" defaultValue={o.label} disabled={busy || out}
+                   onBlur={(e) => {
+                     const label = e.target.value.trim();
+                     if (label && label !== o.label) void rename(o, label, e.target);
+                   }} />
+            {out ? (
+              <span className="faint">{o.status === 'withdrawn' ? 'Removed' : o.status}</span>
+            ) : <>
+              {/* once a race is under way, Remove is the way to take someone off */}
+              {started ? null : (
+                <button className="ghost small" disabled={busy}
+                        onClick={() => void run(() => api.updateOption(type, o.id, { enabled: !o.enabled }))}>
+                  {o.enabled ? 'Disable' : 'Enable'}
+                </button>
+              )}
+              <button className="danger small" disabled={busy}
+                      onClick={() => { if (confirm(`Remove "${o.label}"?`)) void remove(o); }}>
+                Remove
+              </button>
+            </>}
+          </div>
+        );
+      })}
+
+      {started ? null : <>
       <CopyFromPool type={type} questionId={questionId} onCopied={load} />
 
       {/* One control for one name or a whole column pasted out of a
@@ -763,6 +818,7 @@ function Options({ type, questionId, title = 'Options' }: {
             : 'Add option'}
         </button>
       </form>
+      </>}
     </div>
   );
 }

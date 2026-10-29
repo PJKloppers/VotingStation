@@ -160,6 +160,8 @@ export interface QuestionOption {
   description: string;
   enabled: boolean;
   sort_order: number;
+  /** A race's names only: pool, in, dropped, withdrawn, elected, winner. */
+  status?: string;
 }
 
 /* ------------------------------------------------------------- the voter */

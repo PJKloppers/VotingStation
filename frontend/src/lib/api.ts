@@ -587,15 +587,18 @@ export async function updateOption(
 ): Promise<void> {
   const table = OPTION_TABLE[type];
   if (!table) return;
-  const { error } = await supabase.from(table).update(patch).eq('id', id);
+  const { data, error } = await supabase.from(table).update(patch).eq('id', id).select('id');
   if (error) throw new ApiError(error.message);
+  // row security hides what may not be changed: nothing changed is a refusal
+  if (!data || data.length === 0) throw new ApiError('That option can no longer be changed here.');
 }
 
 export async function deleteOption(type: QuestionType, id: string): Promise<void> {
   const table = OPTION_TABLE[type];
   if (!table) return;
-  const { error } = await supabase.from(table).delete().eq('id', id);
+  const { data, error } = await supabase.from(table).delete().eq('id', id).select('id');
   if (error) throw new ApiError(error.message);
+  if (!data || data.length === 0) throw new ApiError('That option can no longer be removed here.');
 }
 
 /* ------------------------------------------------------- the meeting floor */
@@ -689,6 +692,13 @@ export const addCandidate = (questionId: string, optionId: string) =>
 /** A name not on the list yet: onto the nominations list, or (after nominations) into the race. */
 export const nominateNew = (questionId: string, label: string) =>
   roundCall('nominate_new', { p_question: questionId, p_label: label });
+
+/** Removes a name from a race at any stage: deleted, or withdrawn if anyone voted for them. */
+export const removeRaceOption = (questionId: string, optionId: string) =>
+  roundCall('remove_race_option', { p_question: questionId, p_option: optionId });
+
+export const renameRaceOption = (questionId: string, optionId: string, label: string) =>
+  roundCall('rename_race_option', { p_question: questionId, p_option: optionId, p_label: label });
 
 export const withdrawCandidate = (questionId: string, optionId: string) =>
   roundCall('withdraw_candidate', { p_question: questionId, p_option: optionId });
