@@ -5,7 +5,8 @@
  *   a round running  the names in it, never the votes coming in -- not even
  *                    with "Hide vote counts" turned off
  *   a round closed   its count, if the chair turns the counts on
- *   the next round   opening it hides the counts again on its own
+ *   the next round   its names only while it runs; the round before keeps
+ *                    its count on show
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -130,9 +131,7 @@ describe('a race on the live monitor', () => {
     await rpc('settle_round', { p_question: race });
     await rpc('set_race_seats', { p_question: race, p_seats: 1 });
     await gate(true);
-    // the round opening turns the counts off again
-    await until(`document.querySelector('input[name="hide_counts"]').checked`);
-    await setToggle(false);
+    await until(`!!document.querySelector('.monitor-card .pill.open')`);
     await cast(pins[0]!, ['Anna Botha']);
     await cast(pins[1]!, ['Ben Cele']);
     await cast(pins[2]!, ['Anna Botha']);
@@ -162,16 +161,29 @@ describe('a race on the live monitor', () => {
     await setToggle(false);
   }, 60000);
 
-  test('the next round opening hides the counts on its own', async () => {
+  test('while round 2 runs it shows only its names; round 1 keeps its result', async () => {
     // Cara (0) drops; round 2 is Anna and Ben
     await rpc('set_round_drop', { p_question: race, p_rule: 'count', p_n: 1 });
     await rpc('settle_round', { p_question: race });
     await gate(true);
-    await until(`document.querySelector('input[name="hide_counts"]').checked`);
-    const c = await card();
-    expect(c.names.sort()).toEqual(['Anna Botha', 'Ben Cele']);
-    expect(c.counts).toBe(0);
-    expect(c.bars).toBe(0);
+    await until(`[...document.querySelectorAll('.monitor-card details.round summary')].some((s) => s.textContent.includes('Round 2'))`);
+    await cast(pins[0]!, ['Anna Botha']);
+    await until(`document.body.textContent.includes('1 voted')`);
+
+    const rounds = await page.evaluate(() =>
+      [...document.querySelectorAll('.monitor-card details.round')].map((d) => ({
+        name: d.querySelector('summary')!.textContent!.trim(),
+        names: [...d.querySelectorAll('.result-bar .label')].map((n) => n.textContent!.trim()).sort(),
+        counts: [...d.querySelectorAll('.result-bar .count')]
+          .filter((n) => getComputedStyle(n).visibility !== 'hidden').length,
+      })));
+    const r2 = rounds.find((r) => r.name.startsWith('Round 2'))!;
+    const r1 = rounds.find((r) => r.name.startsWith('Round 1'))!;
+    expect(r2.names).toEqual(['Anna Botha', 'Ben Cele']);
+    expect(r2.counts).toBe(0);
+    expect(r1.counts).toBe(3);
+    // the toggle stayed where the chair left it
+    expect(await toggle()).toBe(false);
     await page.close();
   }, 60000);
 });

@@ -16,7 +16,7 @@ import { thresholdRule } from '../lib/rules';
 import { newSeed, shuffled } from '../lib/shuffle';
 import { href, navigate } from '../lib/router';
 import type {
-  Ballot, HighestXTally, OutrightTally, QuestionResult, RecursionTally, YesNoTally,
+  Ballot, HighestXTally, OutrightTally, QuestionResult, YesNoTally,
 } from '../lib/types';
 import { Banner, Card, Empty, Pill, Spinner } from '../components/ui';
 import { RecursionResult } from '../components/RecursionResult';
@@ -31,18 +31,6 @@ export function Live({ ballotId }: { ballotId: string }) {
   const [seed] = useState(newSeed);
   const shuffle = hideCounts ? seed : undefined;
 
-  // A race's next round opening hides the counts again, whatever the toggle
-  // was left at: the room must not watch that round's votes come in.
-  const openRounds = useRef<Set<string> | null>(null);
-  useEffect(() => {
-    if (!results) return;
-    const now = new Set(results.questions
-      .filter((q) => q.type === 'recursion_filter' && q.gate_open)
-      .map((q) => `${q.id}:${(q.tally as RecursionTally).current_round}`));
-    const before = openRounds.current;
-    openRounds.current = now;
-    if (before && [...now].some((k) => !before.has(k))) toggleCounts(true);
-  }, [results]);
   const toggleCounts = (hide: boolean) => {
     setHideCounts(hide);
     try { localStorage.setItem(HIDE_COUNTS_KEY, hide ? '1' : '0'); } catch { /* private window */ }
