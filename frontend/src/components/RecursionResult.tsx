@@ -10,12 +10,17 @@ import { shuffled } from '../lib/shuffle';
 import type { RecursionRound, RecursionTally } from '../lib/types';
 import { Banner, Pill } from './ui';
 
-export function RecursionResult({ tally, chair = false, shuffle }: {
+export function RecursionResult({ tally, chair = false, monitor }: {
   tally: RecursionTally;
   /** The chair sees an unsettled round's projected cut; nobody else needs it. */
   chair?: boolean;
-  /** Set when the counts are hidden: each round's names in this seed's fixed order. */
-  shuffle?: string;
+  /**
+   * The live monitor, on a screen the room can see. Nominations never show
+   * their counts there, a round never shows its count while it runs, and a
+   * closed round shows it only if the monitor is not hiding counts. Hidden,
+   * the names come in a fixed shuffled order (from `seed`), not by votes.
+   */
+  monitor?: { hideCounts: boolean; seed: string };
 }) {
   // Rounds that have not been opened yet hold nothing to show.
   const shown = tally.rounds
@@ -73,7 +78,7 @@ export function RecursionResult({ tally, chair = false, shuffle }: {
             {shown.map((r, i) => (
               <Round key={r.round} round={r} chair={chair} startOpen={i === 0}
                      winner={tally.winner?.id ?? null} threshold={tally.nominate_threshold}
-                     seats={seats} shuffle={shuffle} />
+                     seats={seats} monitor={monitor} />
             ))}
           </div>
         </details>
@@ -99,9 +104,9 @@ function inTheRace(t: RecursionTally): string {
   return t.phase === 'nominating' ? '' : `${still} still in`;
 }
 
-function Round({ round, chair, winner, threshold, seats, startOpen, shuffle }: {
+function Round({ round, chair, winner, threshold, seats, startOpen, monitor }: {
   round: RecursionRound; chair: boolean; winner: string | null; threshold: number; seats: number;
-  shuffle?: string;
+  monitor?: { hideCounts: boolean; seed: string };
   /** Shown unfolded at first; the viewer can fold it like any other. */
   startOpen: boolean;
 }) {
@@ -109,7 +114,12 @@ function Round({ round, chair, winner, threshold, seats, startOpen, shuffle }: {
   const nomination = round.kind === 'nomination';
   // A nomination round lists the whole pool; only the named are worth a bar.
   const named = nomination ? t.options.filter((o) => o.votes > 0) : t.options;
-  const rows = shuffle ? shuffled(named, shuffle, (o) => o.id) : named;
+  // closed: voting is over for this round, whether or not it is settled yet
+  const closed = round.settled || (t.opened && !t.gate_open);
+  const masked = !!monitor && (nomination || !closed || monitor.hideCounts);
+  // the chair's projections ("would drop") give the standings away too
+  const project = chair && !masked && !round.settled;
+  const rows = masked ? shuffled(named, monitor!.seed, (o) => o.id) : named;
   const unnamed = t.options.length - named.length;
 
   return (
@@ -129,7 +139,7 @@ function Round({ round, chair, winner, threshold, seats, startOpen, shuffle }: {
         const out = round.settled && (round.dropped ?? []).some((d) => d.id === o.id);
         const won = round.settled && (round.elected ?? []).some((d) => d.id === o.id);
         const tone = o.id === winner || won ? 'won'
-          : nomination ? (o.qualifies ? '' : 'lost')
+          : nomination ? (o.qualifies || (masked && !round.settled) ? '' : 'lost')
           : out ? 'lost' : '';
         return (
           <div key={o.id} className={`result-bar ${tone}`}>
@@ -137,17 +147,19 @@ function Round({ round, chair, winner, threshold, seats, startOpen, shuffle }: {
               {o.label}
               {out ? ' — out' : ''}
               {won && seats > 1 ? ' — elected' : ''}
-              {!round.settled && chair && o.elected ? ' — would be elected' : ''}
-              {!round.settled && chair && o.seat_tied ? ' — tied for the last seat' : ''}
-              {!round.settled && chair && o.drops ? ' — would drop' : ''}
-              {!round.settled && chair && o.tied ? ' — tied at the cut' : ''}
+              {project && o.elected ? ' — would be elected' : ''}
+              {project && o.seat_tied ? ' — tied for the last seat' : ''}
+              {project && o.drops ? ' — would drop' : ''}
+              {project && o.tied ? ' — tied at the cut' : ''}
             </span>
-            <span className="count">
-              {o.votes}{t.ballots > 0 ? ` · ${(o.share * 100).toFixed(1)}%` : ''}
-            </span>
-            <span className="track">
-              <i style={{ width: `${Math.max(o.share * 100, o.votes > 0 ? 2 : 0)}%` }} />
-            </span>
+            {masked ? null : <>
+              <span className="count">
+                {o.votes}{t.ballots > 0 ? ` · ${(o.share * 100).toFixed(1)}%` : ''}
+              </span>
+              <span className="track">
+                <i style={{ width: `${Math.max(o.share * 100, o.votes > 0 ? 2 : 0)}%` }} />
+              </span>
+            </>}
           </div>
         );
       })}
@@ -160,7 +172,7 @@ function Round({ round, chair, winner, threshold, seats, startOpen, shuffle }: {
 
       <p className="faint" style={{ marginTop: 6 }}>{roundNote(round, threshold)}</p>
 
-      {chair && !round.settled && t.tie_drop_count > 0 ? (
+      {project && t.tie_drop_count > 0 ? (
         <Banner kind="info">
           The cut falls on a tie. You will choose {t.tie_drop_count} of the tied to drop when you settle.
         </Banner>

@@ -16,7 +16,7 @@ import { thresholdRule } from '../lib/rules';
 import { newSeed, shuffled } from '../lib/shuffle';
 import { href, navigate } from '../lib/router';
 import type {
-  Ballot, HighestXTally, OutrightTally, QuestionResult, YesNoTally,
+  Ballot, HighestXTally, OutrightTally, QuestionResult, RecursionTally, YesNoTally,
 } from '../lib/types';
 import { Banner, Card, Empty, Pill, Spinner } from '../components/ui';
 import { RecursionResult } from '../components/RecursionResult';
@@ -30,6 +30,19 @@ export function Live({ ballotId }: { ballotId: string }) {
   // with the counts hidden, lists are in a fixed random order, not by votes
   const [seed] = useState(newSeed);
   const shuffle = hideCounts ? seed : undefined;
+
+  // A race's next round opening hides the counts again, whatever the toggle
+  // was left at: the room must not watch that round's votes come in.
+  const openRounds = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    if (!results) return;
+    const now = new Set(results.questions
+      .filter((q) => q.type === 'recursion_filter' && q.gate_open)
+      .map((q) => `${q.id}:${(q.tally as RecursionTally).current_round}`));
+    const before = openRounds.current;
+    openRounds.current = now;
+    if (before && [...now].some((k) => !before.has(k))) toggleCounts(true);
+  }, [results]);
   const toggleCounts = (hide: boolean) => {
     setHideCounts(hide);
     try { localStorage.setItem(HIDE_COUNTS_KEY, hide ? '1' : '0'); } catch { /* private window */ }
@@ -100,7 +113,8 @@ export function Live({ ballotId }: { ballotId: string }) {
 
       <div className="monitor-grid">
         {results?.questions.map((q) => (
-          <MonitorCard key={q.id} result={q} changes={changes} shuffle={shuffle} />
+          <MonitorCard key={q.id} result={q} changes={changes} shuffle={shuffle}
+                       hideCounts={hideCounts} seed={seed} />
         ))}
       </div>
     </main>
@@ -132,8 +146,8 @@ function Link({ status }: { status: LiveStatus }) {
  * One question. `changes` only ever goes up, so a card can notice that
  * something landed while it was on screen and flicker once.
  */
-function MonitorCard({ result, changes, shuffle }: {
-  result: QuestionResult; changes: number;
+function MonitorCard({ result, changes, shuffle, hideCounts, seed }: {
+  result: QuestionResult; changes: number; hideCounts: boolean; seed: string;
   /** Set when the counts are hidden: options in this seed's fixed order. */
   shuffle?: string;
 }) {
@@ -158,7 +172,7 @@ function MonitorCard({ result, changes, shuffle }: {
       {result.type === 'yes_no' ? <YesNo tally={result.tally} /> : null}
       {result.type === 'highest_outright' ? <Outright tally={result.tally} shuffle={shuffle} /> : null}
       {result.type === 'highest_x' ? <HighestX tally={result.tally} shuffle={shuffle} /> : null}
-      {result.type === 'recursion_filter' ? <RecursionResult tally={result.tally} chair shuffle={shuffle} /> : null}
+      {result.type === 'recursion_filter' ? <RecursionResult tally={result.tally} chair monitor={{ hideCounts, seed }} /> : null}
     </div>
   );
 }
