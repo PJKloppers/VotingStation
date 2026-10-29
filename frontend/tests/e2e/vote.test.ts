@@ -426,6 +426,10 @@ function countsVisible(page: Page): Promise<{ shown: number; hidden: number }> {
   return page.evaluate(() => {
     const all = [...document.querySelectorAll('.monitor .result-bar .count')];
     const hidden = all.filter((n) => getComputedStyle(n).visibility === 'hidden').length;
+    // the bars go with the numbers: a bar's length is a count too
+    const bars = [...document.querySelectorAll('.monitor .result-bar .track')];
+    const barsHidden = bars.filter((b) => getComputedStyle(b).display === 'none').length;
+    if (barsHidden !== (hidden > 0 ? bars.length : 0)) return { shown: -1, hidden: -1 };
     return { shown: all.length - hidden, hidden };
   });
 }
